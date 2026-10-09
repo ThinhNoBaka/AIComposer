@@ -379,6 +379,7 @@ def main(argv=None) -> int:
     ap.add_argument("--keys", type=Path, default=None, help="file JSON chia train/valid/test của HumTrans (nếu có)")
     ap.add_argument("--no-align", action="store_true", help="không căn giờ nhãn MIDI theo tiếng ngân (xem align_reference)")
     ap.add_argument("--min-align", type=float, default=0.5, help="bỏ file có tỉ lệ khung khớp nhãn sau căn giờ dưới mức này")
+    ap.add_argument("--dataset", default="humtrans", help="mã bộ dữ liệu trong ml/dataset_registry.csv (phải được phép train)")
     ap.add_argument("--synthetic", type=int, default=0, help="dùng N mẫu giả lập thay cho dataset")
     ap.add_argument("--limit", type=int, default=0, help="chỉ lấy ngẫu nhiên N file")
     ap.add_argument("--jobs", type=int, default=1, help="số tiến trình trích đặc trưng")
@@ -397,6 +398,11 @@ def main(argv=None) -> int:
     args = ap.parse_args(argv)
     if not args.synthetic and not args.data:
         ap.error("cần --data hoặc --synthetic")
+    if not args.synthetic:
+        sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+        from registry import require_trainable
+
+        require_trainable(args.dataset)
     args.hidden = [h for h in args.hidden if h > 0]
 
     t0 = time.time()

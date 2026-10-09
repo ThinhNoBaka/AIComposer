@@ -267,6 +267,12 @@ def main(argv=None) -> int:
     args = ap.parse_args(argv)
     paths = args.data or [HERE / "data" / "processed"]
     rows = [r for p in paths for r in read_rows(p)]
+    # Mỗi nguồn trong bảng chữ phải có trong sổ nguồn dữ liệu và được phép train.
+    sys.path.insert(0, str(HERE.parent))
+    from registry import VN_TONE_SOURCES, require_trainable
+
+    for src in sorted({r["source"] for r in rows}):
+        require_trainable(VN_TONE_SOURCES.get(src, src))
     samples = make_samples(rows)
     print(f"{len(rows)} chữ, {len(samples)} cặp chữ liền nhau trong câu, {len({r['song_id'] for r in rows})} bài, {len({r['artist_id'] for r in rows})} tác giả")
     if len(samples) < args.min_samples:

@@ -277,6 +277,21 @@ export function Mixer({ song, status, onTrack, onField, onAudition, onVary, onVo
             ))}
           </div>
         </div>
+        <div className="field">
+          <span>Tiếng trống</span>
+          <div className="seg">
+            <button
+              className={song.drumFeel !== 'basic' ? 'is-on' : ''}
+              onClick={() => onField({ drumFeel: 'groove' })}
+              title="Mẫu trống, chỗ nhấn và độ lệch nhịp học từ tay trống thật (Groove MIDI). Kiểu Hào hùng vẫn dùng mẫu viết tay"
+            >
+              Tay trống thật
+            </button>
+            <button className={song.drumFeel === 'basic' ? 'is-on' : ''} onClick={() => onField({ drumFeel: 'basic' })} title="Mẫu cố định, đều như máy">
+              Đều như máy
+            </button>
+          </div>
+        </div>
         <label className="field">
           <span>Đung đưa (swing): {Math.round(song.swing * 200)}%</span>
           <input type="range" min={0} max={0.5} step={0.05} value={song.swing} onChange={(e) => onField({ swing: Number(e.target.value) }, 'swing')} />

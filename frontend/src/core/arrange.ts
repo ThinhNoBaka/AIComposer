@@ -83,7 +83,7 @@ export function varyArrangement(song: Song, seed: number): Song {
   if (!song.sections?.length) {
     // Bài chưa chia đoạn: cả bài một cách đệm mới.
     const st = styleFor('whole', base, r)
-    return { ...song, chordStyle: st.chordStyle, drumStyle: st.drumStyle, sectionStyles: undefined }
+    return { ...song, chordStyle: st.chordStyle, drumStyle: st.drumStyle, sectionStyles: undefined, drumSeed: seed }
   }
   const sectionStyles: Record<number, SectionStyle> = {}
   // Mọi đoạn cùng loại dùng chung một cách đệm và một vòng hợp âm, để điệp khúc lặp lại vẫn nhận ra.
@@ -116,5 +116,5 @@ export function varyArrangement(song: Song, seed: number): Song {
       }
     }
   }
-  return { ...song, chords, sectionStyles }
+  return { ...song, chords, sectionStyles, drumSeed: seed }
 }

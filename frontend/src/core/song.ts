@@ -162,6 +162,10 @@ export type Song = {
   sectionStyles?: Record<number, SectionStyle>
   /** Giọng hát đã thu (tab Giọng hát). */
   vocal?: VocalTrack
+  /** Trống theo mẫu tay trống thật học từ Groove MIDI ('groove', mặc định) hay mẫu đều như máy ('basic'). */
+  drumFeel?: 'groove' | 'basic'
+  /** Chọn mẫu trống nào trong các mẫu đã học; "Biến tấu bản phối" đổi số này. Không có thì dùng seed. */
+  drumSeed?: number
 }
 
 export type Locks = {
@@ -254,6 +258,8 @@ export function validateSong(raw: unknown): string | null {
       if (!st || !CHORD_STYLES.includes(st.chordStyle) || !DRUM_STYLES.includes(st.drumStyle)) return 'Cách đệm theo đoạn bị hỏng.'
     }
   }
+  if (s.drumFeel !== undefined && s.drumFeel !== 'groove' && s.drumFeel !== 'basic') return 'Kiểu cảm giác trống không hợp lệ.'
+  if (s.drumSeed !== undefined && !isNum(s.drumSeed)) return 'Thông tin trống bị hỏng.'
   if (s.vocal !== undefined) {
     const v = s.vocal
     if (!v || typeof v.takeId !== 'string' || !v.takeId || (v.version !== 'original' && v.version !== 'corrected')) return 'Track giọng hát bị hỏng.'

@@ -285,6 +285,10 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--lam", type=float, default=None, help="trọng số emission; bỏ trống thì tự chọn")
     args = ap.parse_args(argv)
 
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+    from registry import require_trainable
+
+    require_trainable("pop909")
     data = load(args.data)
     n = len(data["song_ids"])
     train, test = split_songs(n, 0.1, args.seed)

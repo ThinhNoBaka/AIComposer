@@ -1,5 +1,6 @@
 // Đệm tự động: hợp âm (block / nhịp / rải / quạt chả), bass và trống, suy ra từ vòng hợp âm.
 
+import { GROOVE_SOUNDS, feelHit, grooveStyle, pickFill, pickPattern, stableJitter, type GrooveStyle } from './grooveModel'
 import { STEPS_PER_BAR, chordStyleAt, densityAt, drumStyleAt, sectionAt, stepSeconds, type Song } from './song'
 import { chordPitches, isNoChord } from './theory'
 
@@ -201,6 +202,11 @@ export function drumHits(song: Song): DrumHit[] {
     }
     // Vào điệp khúc luôn có cymbal.
     if (section?.kind === 'chorus' && local === 0 && (style === 'ballad' || style === 'lofi')) add(bar, 'crash', [0], 95)
+    const g = song.drumFeel !== 'basic' ? grooveStyle(style) : null
+    if (g) {
+      grooveBar(out, g, song, bar, section?.start ?? Math.floor(bar / 8) * 8, d, phraseStart, phraseEnd)
+      continue
+    }
     switch (style) {
       case 'pop':
         add(bar, 'kick', d === 2 ? [0, 8, 10] : [0, 8], 110)
@@ -239,6 +245,30 @@ export function drumHits(song: Song): DrumHit[] {
     }
   }
   return out
+}
+
+/**
+ * Một ô trống theo mẫu tay trống thật (Groove MIDI): mỗi đoạn (hoặc mỗi 8 ô) một mẫu, ô cuối câu thay nửa sau bằng
+ * mẫu dồn trống, lực và độ lệch nhịp theo cảm giác đã học.
+ */
+function grooveBar(out: DrumHit[], g: GrooveStyle, song: Song, bar: number, unit: number, d: 0 | 1 | 2, phraseStart: boolean, phraseEnd: boolean) {
+  const seed = (song.drumSeed ?? song.seed) >>> 0
+  const pat = pickPattern(g, d, seed + unit * 31)
+  const fill = phraseEnd && d > 0 ? pickFill(g, seed + bar * 13) : null
+  const t0 = bar * STEPS_PER_BAR
+  const hit = (sound: DrumSound, s: number, lane: number, fallback: number) => {
+    const { vel, offset } = feelHit(g, sound, s, fallback, stableJitter(seed, bar, s, lane))
+    // Không kéo nốt sang ô trước (ô trước có thể là dạo đầu không trống).
+    out.push({ sound, start: Math.max(t0, t0 + s + offset), vel })
+  }
+  GROOVE_SOUNDS.forEach((sound, lane) => {
+    let steps = pat[sound] ?? []
+    if (fill) steps = [...steps.filter((s) => s < 8), ...(fill[sound] ?? []).filter((s) => s >= 8)]
+    for (const s of steps) hit(sound, s, lane, sound === 'kick' ? 105 : sound === 'snare' ? 95 : 70)
+  })
+  // Mẫu chỉ có kick + snare (tay trống dùng ride lúc có lúc không): thêm hi-hat móc đơn nhẹ cho đỡ trống trải.
+  if (d > 0 && !pat['hihat-close'] && !pat['hihat-open']) for (let s = 0; s < 16; s += 2) hit('hihat-close', s, 9, 62)
+  if (phraseStart && d > 0 && bar > 0 && !pat.crash) hit('crash', 0, 10, 90)
 }
 
 /** Số nốt trống GM (kênh 10) cho xuất MIDI. */

@@ -121,8 +121,11 @@ Image cũng chạy được ở nơi khác hỗ trợ Docker (Railway, Fly.io, H
 | Bài toán | Thư mục | Trạng thái |
 |---|---|---|
 | B. Hoà âm (giai điệu → hợp âm) | `ml/harmony` | Đã train trên 909 bài POP909, file `frontend/src/core/harmonyModel.json`. Kết quả trong `ml/harmony/REPORT.md` |
-| A. Thanh điệu → giai điệu | `ml/vn_tone` | Pipeline đọc .kar/MusicXML và notebook Colab cho audio. Train xong đặt `tone_model.json` vào `frontend/public/models/`, app tự dùng |
-| C. Dò onset khi ngân | `ml/humming` | Notebook Colab train trên HumTrans. Đặt `humming_onset.json` vào `backend/models/`, backend tự dùng |
+| A. Thanh điệu → giai điệu (đã train) | `ml/vn_tone` | `frontend/public/models/tone_model.json` học từ 20 bài Việt (ĐH Edinburgh) |
+| C. Dò onset khi ngân (đã train) | `ml/humming` | `backend/models/humming_onset.json` học từ HumTrans. Thử độ bền trên giọng khác nguồn (CHAD-Hummings): `ml/humming/CHAD_REPORT.md` |
+| D. Mẫu trống | `ml/drums` | Học từ Groove MIDI (tay trống thật), file `frontend/src/core/grooveModel.json`. Bảng Nhạc cụ có nút Tay trống thật / Đều như máy |
+
+Mọi bộ dữ liệu ghi trong `ml/dataset_registry.csv` (nguồn, phiên bản, giấy phép, được train hay chỉ đánh giá). Script train tự dừng nếu bộ dữ liệu chưa có trong sổ hoặc ghi `can_train=false`.
 
 ## Dành cho nhà phát triển: đo độ chính xác nhận nốt (không bắt buộc)
 

@@ -71,3 +71,25 @@ Truyền cả `y` (audio đã chuẩn hoá đưa vào `track_pitch`) vì mô hì
 
 Khi đánh giá, `train_onset.py` chạy đúng `transcribe_array` của app hai lần cho mỗi file kiểm định: một lần như hiện tại,
 một lần chèn mô hình ở chỗ trên, rồi chấm note F1 bằng mir_eval (bỏ qua lệch quãng tám).
+
+## Thử độ bền trên giọng khác nguồn (CHAD-Hummings)
+
+`chad_check.py` chạy bước nhận nốt (cả cách tách bằng luật và có model onset) trên [CHAD-Hummings](https://huggingface.co/datasets/amanteur/CHAD_hummings)
+(CC BY-NC 4.0, chỉ dùng để đánh giá, không train). Bộ này không có nhãn nốt nên không tính Note F1; thay vào đó so chuỗi quãng
+giữa nhiều người ngân cùng một đoạn (càng giống nhau càng tốt) và đếm dấu hiệu lỗi (file trống, nốt quá ngắn, nhảy quãng tám).
+Kết quả: `CHAD_REPORT.md`.
+
+```bash
+# Lấy 1.200 file đầu của archive 1,6 GB mà không tải hết: giải nén dạng luồng rồi dừng
+curl -L https://huggingface.co/datasets/amanteur/CHAD_hummings/resolve/main/chad_hummings_subset.tar.gz | python3 -c "
+import sys, tarfile, os
+n = 0
+with tarfile.open(fileobj=sys.stdin.buffer, mode='r|gz') as tf:
+    for m in tf:
+        if m.isfile() and m.name.endswith('.wav'):
+            d = os.path.join('ml/humming/data/chad', *m.name.strip('./').split('/')[-3:])
+            os.makedirs(os.path.dirname(d), exist_ok=True)
+            open(d, 'wb').write(tf.extractfile(m).read()); n += 1
+            if n >= 1200: break"
+python ml/humming/chad_check.py --data ml/humming/data/chad --jobs 4
+```
