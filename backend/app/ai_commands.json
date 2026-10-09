@@ -1,0 +1,21 @@
+{
+  "_ghi_chu": "Các mẫu lệnh AI được phép trả về. Test frontend (commands.test.ts) kiểm tra mọi mẫu ở đây đều được parseCommand hiểu trọn.",
+  "groups": [
+    { "name": "Tốc độ", "examples": ["nhanh hơn", "chậm lại", "nhanh hơn nhiều", "chậm lại một chút", "tempo 100"] },
+    {
+      "name": "Cảm xúc (đổi kiểu đệm, hợp âm)",
+      "examples": ["đổi sang vui", "đổi sang buồn", "đổi sang chill", "đổi sang hào hùng", "đổi sang lãng mạn", "đổi sang sôi động", "đổi sang mơ màng", "đổi sang dân gian", "bỏ trống"]
+    },
+    { "name": "Giọng", "examples": ["giọng Đô trưởng", "giọng La thứ", "giọng Fa thăng thứ", "giọng Si giáng trưởng", "lên 2 nửa cung", "xuống 1 nửa cung"] },
+    { "name": "Cấu trúc bài", "examples": ["hoàn thiện thành bài", "thêm điệp khúc", "biến tấu phối", "dài thêm 4 ô"] },
+    { "name": "Giai điệu", "examples": ["tạo giai điệu mới", "viết tiếp", "biến tấu", "giai điệu cao hơn", "giai điệu thấp hơn", "xoá giai điệu"] },
+    { "name": "Hợp âm", "examples": ["hoà âm lại", "đổi vòng hợp âm", "hợp âm màu"] },
+    {
+      "name": "Nhạc cụ (thay tên nhạc cụ: piano, piano điện, guitar, guitar điện, violin, cello, sáo, sáo trúc, saxophone, harmonica, trumpet, organ, accordion, đàn tranh, đàn hạc, dàn dây, hợp xướng, hộp nhạc, marimba, kalimba, synth)",
+      "examples": ["giai điệu dùng sáo trúc", "hợp âm dùng guitar", "bass dùng piano điện"]
+    },
+    { "name": "Trống", "examples": ["tắt trống", "bật trống"] },
+    { "name": "Âm lượng", "examples": ["giai điệu to hơn", "hợp âm nhỏ hơn", "trống to hơn", "bass nhỏ hơn"] },
+    { "name": "Phát", "examples": ["phát", "dừng", "bật đếm nhịp", "tắt đếm nhịp", "lặp lại", "tắt lặp"] }
+  ]
+}

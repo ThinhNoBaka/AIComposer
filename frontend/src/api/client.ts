@@ -95,7 +95,15 @@ export const api = {
     request<VocalCorrectResult>(`/api/vocal/takes/${id}/correct`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }),
   vocalAudio: async (id: string, version: 'original' | 'corrected') => (await send(`/api/vocal/takes/${id}/audio?version=${version}`)).arrayBuffer(),
   deleteVocalTake: (id: string) => request<void>(`/api/vocal/takes/${id}`, { method: 'DELETE' }),
+  aiStatus: () => request<{ available: boolean }>('/api/ai/status'),
+  aiLyrics: (body: AiLyricsRequest) =>
+    request<AiLyricsResult>('/api/ai/lyrics', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }),
+  aiCommand: (text: string, context?: string) =>
+    request<{ commands: string[]; reply: string }>('/api/ai/command', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ text, context }) }),
 }
+
+export type AiLyricsRequest = { topic: string; mood?: string; line_syllables: number[]; contours?: number[][]; before?: string }
+export type AiLyricsResult = { title: string; lines: { text: string; syllables: number; wanted: number }[] }
 
 export type VocalTakeCreated = { id: string; duration_s: number; sr: number; offset_ms: number; bpm: number | null; project_id: string | null }
 

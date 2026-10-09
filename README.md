@@ -111,6 +111,9 @@ Image cũng chạy được ở nơi khác hỗ trợ Docker (Railway, Fly.io, H
 | `MAX_UPLOAD_MB` | `15` | Dung lượng tối đa của file ghi âm |
 | `CORS_ORIGINS` | (trống) | Chỉ cần khi frontend nằm ở domain khác, ngăn cách bằng dấu phẩy |
 | `HUMMING_MODEL` | `backend/models/humming_onset.json` | File model dò onset; không có file thì dùng cách tách nốt mặc định, `none` để tắt |
+| `ANTHROPIC_API_KEY` | (trống) | Bật viết lời và hiểu lệnh tự do bằng AI (Claude). Trống thì ẩn phần AI, mọi thứ khác vẫn chạy |
+| `AI_MODEL` | `claude-opus-5-5` | Model dùng cho phần AI |
+| `AI_DAILY_LIMIT` / `AI_DAILY_LIMIT_TOTAL` | `60` / `400` | Số lần gọi AI tối đa mỗi ngày cho mỗi trình duyệt / cả máy chủ, để người lạ không tiêu hết tiền API |
 | `WARMUP` | `1` | Chạy nhận nốt thử khi khởi động để lần đầu người dùng không phải chờ biên dịch |
 
 ## Model học máy
