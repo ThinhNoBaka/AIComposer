@@ -256,6 +256,7 @@ def load_model() -> OnsetModel | None:
 MIN_PART_FRAMES = 5  # mỗi mảnh sau khi chẻ dài ít nhất 50 ms
 MERGE_GAP_SEC = 0.06  # hai nốt cách nhau ít hơn mức này mới xét gộp
 MERGE_PITCH = 0.5  # nửa cung: lệch ít hơn coi là cùng cao độ
+DIP_RATIO = 0.5  # năng lượng chỗ nối tụt dưới nửa mức của hai nốt (−6 dB) là người ngân đã lấy hơi/nhấn lại: không gộp
 
 
 def _frame_range(track: PitchTrack, onset: float, offset: float) -> np.ndarray:
@@ -277,6 +278,17 @@ def _note_from_frames(track: PitchTrack, frames: np.ndarray, like: NoteEvent) ->
     # Chỉ điền các trường NoteEvent đang có (giữ được khi notes.py đổi cấu trúc).
     own = {f.name for f in fields(like)}
     return replace(like, **{k: v for k, v in values.items() if k in own})
+
+
+def _energy_dip(track: PitchTrack, prev: NoteEvent, n: NoteEvent) -> bool:
+    """Chỗ nối hai nốt có tụt năng lượng rõ không (dấu hiệu nốt lặp được nhấn lại dù mô hình không thấy onset)."""
+    a, b = _frame_range(track, prev.onset, prev.offset), _frame_range(track, n.onset, n.offset)
+    if not len(a) or not len(b):
+        return False
+    j = b[0]
+    around = track.rms[max(0, j - 3) : j + 4]
+    level = min(float(np.median(track.rms[a])), float(np.median(track.rms[b])))
+    return bool(len(around)) and level > 0 and float(np.min(around)) < DIP_RATIO * level
 
 
 def split_merge(notes: list[NoteEvent], track: PitchTrack, onsets: np.ndarray, tolerance: int = 4) -> list[NoteEvent]:
@@ -308,7 +320,12 @@ def split_merge(notes: list[NoteEvent], track: PitchTrack, onsets: np.ndarray, t
             gap = n.onset - prev.offset
             start_frame = int(round(n.onset * track.sr / track.hop))
             has_onset = bool(np.any(np.abs(onset_set - start_frame) <= tolerance)) if len(onset_set) else False
-            if 0 <= gap < MERGE_GAP_SEC and abs(n.pitch - prev.pitch) < MERGE_PITCH and not has_onset:
+            if (
+                0 <= gap < MERGE_GAP_SEC
+                and abs(n.pitch - prev.pitch) < MERGE_PITCH
+                and not has_onset
+                and not _energy_dip(track, prev, n)
+            ):
                 frames = _frame_range(track, prev.onset, n.offset)
                 out[-1] = _note_from_frames(track, frames, prev) if len(frames) else prev
                 continue

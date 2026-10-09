@@ -10,6 +10,10 @@ khung 10 ms nào là điểm bắt đầu nốt (onset), rồi dùng nó để c
   cao độ theo cent so với trung vị bản thu, xác suất có giọng (pYIN), độ thay đổi cao độ, năng lượng RMS (dB) và độ thay đổi,
   spectral flux, onset strength; ghép thêm ±3 khung lân cận (49 đặc trưng).
 - **Nhãn**: khung cách onset của nốt trong file MIDI không quá 2 khung (20 ms).
+- **Căn giờ nhãn** (`align_reference`): MIDI của HumTrans luôn bắt đầu ở giây 0 còn người ngân vào trễ khoảng 0,2 s, nên
+  không căn thì gần như mọi onset nhãn lệch quá 50 ms (note F1 của chính pipeline chỉ ~0,03). Script dò độ dời và hệ số co
+  giãn sao cho cao độ pYIN khớp nốt nhãn nhiều nhất, rồi bỏ file khớp dưới 50% (`--min-align`). Tắt bằng `--no-align`.
+  Cache đặc trưng giữ nhãn gốc, nên đổi cách căn không phải chạy lại pYIN.
 - **Mô hình**: MLP một lớp ẩn 16 nơ-ron (hoặc hồi quy logistic với `--hidden 0`), viết bằng numpy, có trọng số cho lớp onset
   (hiếm). Ngưỡng chọn theo F1 onset (±50 ms) trên tập kiểm định.
 - **Áp dụng** (`apply_onset_model(notes, track, y)`): nốt có onset dự đoán ở giữa thì chẻ ra; hai nốt liền nhau cùng cao độ
@@ -27,6 +31,7 @@ python ml/humming/train_onset.py --synthetic 60 --out /tmp/humming_onset.json
 
 # Dữ liệu thật dạng HumTrans: thư mục chứa wav + mid cùng tên (tìm đệ quy)
 python ml/humming/train_onset.py --data ml/humming/data/HumTrans --limit 2000 --jobs 4 \
+    --keys ml/humming/data/HumTrans/train_valid_test_keys.json \
     --cache-dir ml/humming/data/cache --out backend/models/humming_onset.json
 
 python -m pytest ml/humming/tests -q
@@ -39,6 +44,12 @@ Dữ liệu trong `ml/humming/data/` không vào git. Các tuỳ chọn hay dùn
 
 Mở `ml/humming/colab_humming.ipynb`: tải HumTrans từ Hugging Face, trích đặc trưng song song (có cache trên Drive), huấn luyện,
 so sánh note F1 (mir_eval) giữa pipeline hiện tại và pipeline có mô hình, rồi tải file JSON về.
+
+## Mô hình đang dùng
+
+`backend/models/humming_onset.json` (2026-10-09) học trên 2.158 đoạn ngân HumTrans (lấy ngẫu nhiên 3.000 đoạn theo đúng
+chia train/valid/test của bộ dữ liệu, bỏ 292 đoạn nhãn không khớp). Trên 279 đoạn test: note F1 0,422 → 0,433, tốt hơn ở 108
+đoạn, kém hơn ở 42 đoạn. Không cần tải cả `all_wav.zip` (14,7 GB): đọc từng file trong zip qua HTTP range (thư viện `remotezip`).
 
 ## Đưa vào app
 

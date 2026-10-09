@@ -58,3 +58,21 @@ def test_humtrans_folder_with_cache(tmp_path):
     assert len(d["layers"]) == 1  # --hidden không giá trị = hồi quy logistic
     # Lần hai đọc từ cache.
     assert train_onset.main(args) == 0
+
+
+def test_align_reference_recovers_late_start():
+    """Nhãn bắt đầu ở 0 nhưng tiếng ngân vào trễ 0,23 s (như HumTrans): căn giờ phải tìm lại độ dời đó."""
+    import numpy as np
+
+    from app.humming.pitch import PitchTrack
+
+    ref = [(0.0, 0.4, 60.0), (0.45, 0.9, 64.0), (0.95, 1.5, 67.0), (1.55, 2.0, 65.0), (2.05, 2.6, 62.0)]
+    times = np.arange(0, 3.5, 0.01)
+    midi = np.full_like(times, np.nan)
+    for a, b, p in ref:
+        midi[(times >= a + 0.23) & (times < b + 0.23)] = p + 12.2  # ngân cao hơn một quãng tám, lệch chuẩn nhẹ
+    track = PitchTrack(times=times, midi=midi, voiced_prob=np.ones_like(times), rms=np.ones_like(times), sr=16000, hop=160)
+    aligned, rate = train_onset.align_reference(ref, track)
+    assert rate > 0.9
+    assert abs(aligned[0][0] - 0.23) <= 0.015
+    assert abs(aligned[-1][0] - (2.05 + 0.23)) <= 0.03
