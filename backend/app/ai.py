@@ -1,6 +1,11 @@
-"""Viết lời và hiểu lệnh tiếng Việt bằng Claude (Anthropic API).
+"""Viết lời và hiểu lệnh tiếng Việt bằng AI.
 
-Chỉ bật khi máy chủ có biến môi trường ANTHROPIC_API_KEY (đặt trong Render > Environment, không để trong code).
+Bật khi máy chủ có một trong các khoá sau (đặt trong Render > Environment, không để trong code):
+- GEMINI_API_KEY: Gemini của Google (có gói miễn phí, lấy khoá ở aistudio.google.com)
+- GROQ_API_KEY: Groq (có gói miễn phí, console.groq.com)
+- ANTHROPIC_API_KEY: Claude (trả tiền theo lượt)
+- AI_API_KEY + AI_BASE_URL: dịch vụ bất kỳ có API kiểu OpenAI (OpenRouter, máy tự chạy...)
+Có nhiều khoá thì AI_PROVIDER chọn (gemini, groq, anthropic, openai); không đặt thì lấy theo thứ tự trên.
 Không có khoá thì /api/ai/status trả available=false và giao diện ẩn các nút AI, mọi thứ khác vẫn chạy.
 
 Lệnh: AI không tự sửa bài. Nó chỉ dịch câu nói tự do của người dùng thành các câu lệnh ngắn mà bộ hiểu lệnh có sẵn
@@ -17,9 +22,9 @@ from functools import lru_cache
 from pathlib import Path
 
 import anthropic
-from pydantic import BaseModel, Field
+import httpx
+from pydantic import BaseModel, Field, ValidationError
 
-AI_MODEL = os.environ.get("AI_MODEL", "claude-opus-5-5")
 # Mỗi khoá người dùng và cả máy chủ chỉ được gọi AI chừng này lần mỗi ngày, để người lạ vào web không tiêu hết tiền API.
 DAILY_LIMIT_PER_USER = int(os.environ.get("AI_DAILY_LIMIT", "60"))
 DAILY_LIMIT_TOTAL = int(os.environ.get("AI_DAILY_LIMIT_TOTAL", "400"))
@@ -36,13 +41,48 @@ class AIError(Exception):
         self.message = message
 
 
+# Nhà cung cấp có API kiểu OpenAI (/chat/completions): biến chứa khoá, địa chỉ, model mặc định.
+OPENAI_STYLE = {
+    "gemini": ("GEMINI_API_KEY", "https://generativelanguage.googleapis.com/v1beta/openai", "gemini-flash-latest"),
+    "groq": ("GROQ_API_KEY", "https://api.groq.com/openai/v1", "openai/gpt-oss-120b"),
+    "openai": ("AI_API_KEY", None, None),
+}
+ANTHROPIC_MODEL = "claude-opus-5-5"
+ORDER = ["gemini", "groq", "anthropic", "openai"]
+
+
+def _has_key(name: str) -> bool:
+    if name == "anthropic":
+        return bool(os.environ.get("ANTHROPIC_API_KEY"))
+    key_env, base, _ = OPENAI_STYLE[name]
+    return bool(os.environ.get(key_env)) and bool(base or os.environ.get("AI_BASE_URL"))
+
+
+def provider() -> str | None:
+    """Nhà cung cấp đang dùng, None nếu chưa có khoá nào."""
+    want = os.environ.get("AI_PROVIDER", "").strip().lower()
+    if want:
+        return want if want in ORDER and _has_key(want) else None
+    return next((p for p in ORDER if _has_key(p)), None)
+
+
 def available() -> bool:
-    return bool(os.environ.get("ANTHROPIC_API_KEY"))
+    return provider() is not None
+
+
+def model_name(p: str) -> str:
+    if os.environ.get("AI_MODEL"):
+        return os.environ["AI_MODEL"]
+    return ANTHROPIC_MODEL if p == "anthropic" else OPENAI_STYLE[p][2] or "gpt-4o-mini"
 
 
 @lru_cache(maxsize=1)
 def _client() -> anthropic.Anthropic:
     return anthropic.Anthropic(max_retries=2, timeout=90.0)
+
+
+def _http() -> httpx.Client:
+    return httpx.Client(timeout=90.0)
 
 
 # ---------- Giới hạn số lần gọi mỗi ngày ----------
@@ -74,15 +114,18 @@ def _reset_quota() -> None:  # dùng trong test
         _counts.clear()
 
 
-# ---------- Gọi Claude ----------
+# ---------- Gọi AI ----------
 
 
 def _call(system: str, user: str, schema: type[BaseModel], effort: str, max_tokens: int) -> BaseModel:
-    if not available():
+    p = provider()
+    if p is None:
         raise AIUnavailable()
+    if p != "anthropic":
+        return _call_openai_style(p, system, user, schema, max_tokens)
     try:
         resp = _client().messages.parse(
-            model=AI_MODEL,
+            model=model_name(p),
             max_tokens=max_tokens,
             system=system,
             messages=[{"role": "user", "content": user}],
@@ -107,6 +150,62 @@ def _call(system: str, user: str, schema: type[BaseModel], effort: str, max_toke
     if resp.stop_reason == "max_tokens" or resp.parsed_output is None:
         raise AIError(502, "AI trả lời chưa trọn. Thử lại, hoặc xin ít câu hơn.")
     return resp.parsed_output
+
+
+def _json_from(text: str) -> str:
+    """Model miễn phí đôi khi bọc JSON trong ```json ... ``` hoặc nói thêm vài chữ: lấy phần từ { đầu tới } cuối."""
+    a, b = text.find("{"), text.rfind("}")
+    return text[a : b + 1] if a >= 0 and b > a else text
+
+
+def _call_openai_style(p: str, system: str, user: str, schema: type[BaseModel], max_tokens: int) -> BaseModel:
+    """Gemini, Groq, OpenRouter...: gọi /chat/completions ở chế độ JSON, rồi kiểm bằng Pydantic. Sai dạng thì nhờ sửa một lần."""
+    key_env, base, _ = OPENAI_STYLE[p]
+    url = (base or os.environ.get("AI_BASE_URL", "")).rstrip("/") + "/chat/completions"
+    shape = json.dumps(schema.model_json_schema(), ensure_ascii=False)
+    messages = [
+        {"role": "system", "content": f"{system}\n\nChỉ trả lời bằng một đối tượng JSON đúng lược đồ sau, không thêm chữ nào khác:\n{shape}"},
+        {"role": "user", "content": user},
+    ]
+    headers = {"Authorization": f"Bearer {os.environ[key_env]}"}
+    json_mode = True
+    with _http() as http:
+        for attempt in range(2):
+            body = {"model": model_name(p), "messages": messages, "max_tokens": max_tokens}
+            if json_mode:
+                body["response_format"] = {"type": "json_object"}
+            try:
+                r = http.post(url, json=body, headers=headers)
+                if r.status_code == 400 and json_mode:
+                    # Vài model không nhận chế độ JSON: gọi lại không có nó, lời dặn trong system vẫn đòi JSON.
+                    json_mode = False
+                    body = {k: v for k, v in body.items() if k != "response_format"}
+                    r = http.post(url, json=body, headers=headers)
+            except httpx.HTTPError as e:
+                raise AIError(502, "Máy chủ không kết nối được tới AI.") from e
+            if r.status_code in (401, 403):
+                raise AIError(503, f"Khoá API trên máy chủ không hợp lệ. Kiểm tra lại {key_env}.")
+            if r.status_code == 429:
+                raise AIError(429, "Đã hết lượt miễn phí của AI trong lúc này. Thử lại sau ít phút.")
+            if r.status_code >= 400:
+                raise AIError(502, f"AI đang lỗi ({r.status_code}). Thử lại sau, hoặc đổi AI_MODEL.")
+            try:
+                choice = r.json()["choices"][0]
+                text = choice["message"]["content"] or ""
+            except (ValueError, KeyError, IndexError, TypeError) as e:
+                raise AIError(502, "AI trả về dữ liệu lạ.") from e
+            if choice.get("finish_reason") == "content_filter":
+                raise AIError(422, "AI không viết nội dung này. Thử đổi chủ đề khác.")
+            try:
+                return schema.model_validate_json(_json_from(text))
+            except ValidationError as e:
+                if attempt:
+                    raise AIError(502, "AI trả lời sai dạng. Thử lại.") from e
+                messages += [
+                    {"role": "assistant", "content": text},
+                    {"role": "user", "content": f"Câu trả lời chưa đúng lược đồ JSON ({e.errors()[0]['msg']}). Trả lại đúng JSON."},
+                ]
+    raise AIError(502, "AI trả lời sai dạng. Thử lại.")
 
 
 # ---------- Viết lời ----------

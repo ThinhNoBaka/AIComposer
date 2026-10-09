@@ -103,7 +103,7 @@ export function LyricsPanel({ text, lines, alignment, hasMelody, onText, onMelod
 
       <h3 className="side-h">Viết lời bằng AI</h3>
       {aiAvailable === false ? (
-        <p className="hint">Máy chủ chưa bật AI. Chủ web thêm biến ANTHROPIC_API_KEY trong phần Environment của Render là dùng được.</p>
+        <p className="hint">Máy chủ chưa bật AI. Chủ web lấy khoá miễn phí ở aistudio.google.com rồi thêm biến GEMINI_API_KEY trong phần Environment của Render là dùng được.</p>
       ) : (
         <>
           <input

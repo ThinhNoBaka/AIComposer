@@ -111,8 +111,12 @@ Image cũng chạy được ở nơi khác hỗ trợ Docker (Railway, Fly.io, H
 | `MAX_UPLOAD_MB` | `15` | Dung lượng tối đa của file ghi âm |
 | `CORS_ORIGINS` | (trống) | Chỉ cần khi frontend nằm ở domain khác, ngăn cách bằng dấu phẩy |
 | `HUMMING_MODEL` | `backend/models/humming_onset.json` | File model dò onset; không có file thì dùng cách tách nốt mặc định, `none` để tắt |
-| `ANTHROPIC_API_KEY` | (trống) | Bật viết lời và hiểu lệnh tự do bằng AI (Claude). Trống thì ẩn phần AI, mọi thứ khác vẫn chạy |
-| `AI_MODEL` | `claude-opus-5-5` | Model dùng cho phần AI |
+| `GEMINI_API_KEY` | (trống) | Bật viết lời và hiểu lệnh tự do bằng AI, dùng Gemini của Google (có gói miễn phí, lấy khoá ở aistudio.google.com). Không có khoá AI nào thì ẩn phần AI, mọi thứ khác vẫn chạy |
+| `GROQ_API_KEY` | (trống) | Như trên, dùng Groq (có gói miễn phí, console.groq.com) |
+| `ANTHROPIC_API_KEY` | (trống) | Như trên, dùng Claude (trả tiền theo lượt) |
+| `AI_API_KEY` + `AI_BASE_URL` | (trống) | Dịch vụ bất kỳ có API kiểu OpenAI (OpenRouter, máy tự chạy...) |
+| `AI_PROVIDER` | (tự chọn) | Có nhiều khoá thì chọn `gemini`, `groq`, `anthropic` hoặc `openai`; không đặt thì lấy theo thứ tự đó |
+| `AI_MODEL` | tuỳ nhà cung cấp | Mặc định `gemini-flash-latest`, `openai/gpt-oss-120b` (Groq), `claude-opus-5-5` |
 | `AI_DAILY_LIMIT` / `AI_DAILY_LIMIT_TOTAL` | `60` / `400` | Số lần gọi AI tối đa mỗi ngày cho mỗi trình duyệt / cả máy chủ, để người lạ không tiêu hết tiền API |
 | `WARMUP` | `1` | Chạy nhận nốt thử khi khởi động để lần đầu người dùng không phải chờ biên dịch |
 

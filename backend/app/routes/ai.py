@@ -53,12 +53,13 @@ def _run(fn, *args):
 
 def _need_ai():
     if not ai.available():
-        raise HTTPException(status_code=503, detail="Máy chủ chưa bật AI (chưa có ANTHROPIC_API_KEY).")
+        raise HTTPException(status_code=503, detail="Máy chủ chưa bật AI (chưa có GEMINI_API_KEY, GROQ_API_KEY hoặc ANTHROPIC_API_KEY).")
 
 
 @router.get("/status")
 def status():
-    return {"available": ai.available()}
+    p = ai.provider()
+    return {"available": p is not None, "provider": p}
 
 
 @router.post("/lyrics", response_model=LyricsResponse)
