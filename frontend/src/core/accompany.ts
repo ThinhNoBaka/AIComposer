@@ -1,6 +1,6 @@
-// Đệm tự động: hợp âm (block / nhịp / rải), bass và trống, suy ra từ vòng hợp âm.
+// Đệm tự động: hợp âm (block / nhịp / rải / quạt chả), bass và trống, suy ra từ vòng hợp âm.
 
-import { STEPS_PER_BAR, densityAt, sectionAt, type Song } from './song'
+import { STEPS_PER_BAR, chordStyleAt, densityAt, drumStyleAt, sectionAt, stepSeconds, type Song } from './song'
 import { chordPitches, isNoChord } from './theory'
 
 export type AccNote = { pitch: number; start: number; dur: number; vel: number }
@@ -55,6 +55,51 @@ export function voiceChords(song: Song): number[][] {
   return voicings
 }
 
+/** Nhịp quạt chả theo móc đơn (8 ô mỗi ô nhịp): D = quạt xuống, U = quạt lên, '-' = nghỉ. */
+export const STRUM_PATTERNS: Record<0 | 1 | 2, string> = {
+  0: 'D---D---',
+  1: 'D-DU-UDU',
+  2: 'DUDUDUDU',
+}
+
+/** Khoảng cách giữa hai dây khi quạt (ms): quạt xuống chậm hơn quạt lên một chút. */
+const STRUM_DOWN_MS = 20
+const STRUM_UP_MS = 14
+
+/**
+ * Quạt chả kiểu guitar: các nốt của hợp âm vang lệch nhau vài chục ms.
+ * Quạt xuống từ dây trầm lên dây cao (thêm nốt gốc thấp một quãng tám nếu còn trong tầm guitar),
+ * quạt lên từ dây cao xuống, chỉ 3 dây trên và nhẹ hơn. Vị trí là bước có phần lẻ.
+ */
+export function strumBar(v: number[], t0: number, density: 0 | 1 | 2, bpm: number): AccNote[] {
+  const out: AccNote[] = []
+  if (!v.length) return out
+  const pattern = STRUM_PATTERNS[density]
+  const stepSec = stepSeconds(bpm)
+  const down = v[0] - 12 >= 40 ? [v[0] - 12, ...v] : v
+  const up = [...v].reverse().slice(0, 3)
+  for (let slot = 0; slot < pattern.length; slot++) {
+    const kind = pattern[slot]
+    if (kind === '-') continue
+    let next = slot + 1
+    while (next < pattern.length && pattern[next] === '-') next++
+    const span = (next - slot) * 2
+    const strings = kind === 'D' ? down : up
+    const gap = (kind === 'D' ? STRUM_DOWN_MS : STRUM_UP_MS) / 1000 / stepSec
+    const accent = slot % 4 === 0
+    strings.forEach((p, i) => {
+      const off = i * gap
+      out.push({
+        pitch: p,
+        start: t0 + slot * 2 + off,
+        dur: Math.max(0.25, span - off - 0.1),
+        vel: kind === 'D' ? (accent ? 84 : 74) - i * 2 : 56 - i * 3,
+      })
+    })
+  }
+  return out
+}
+
 export function chordTrackNotes(song: Song): AccNote[] {
   const out: AccNote[] = []
   const voicings = voiceChords(song)
@@ -62,18 +107,21 @@ export function chordTrackNotes(song: Song): AccNote[] {
     if (!v.length) return
     const t0 = bar * STEPS_PER_BAR
     const density = densityAt(song, bar)
+    const style = chordStyleAt(song, bar)
     if (sectionAt(song, bar)?.kind === 'outro') {
       // Phần kết: hợp âm ngân dài, không nhịp.
       v.forEach((p) => out.push({ pitch: p, start: t0, dur: 16, vel: 70 }))
       return
     }
-    if (song.chordStyle === 'block') {
+    if (style === 'strum') {
+      out.push(...strumBar(v, t0, density, song.bpm))
+    } else if (style === 'block') {
       if (density === 2) {
         for (const s of [0, 8]) v.forEach((p) => out.push({ pitch: p, start: t0 + s, dur: 8, vel: s === 0 ? 80 : 66 }))
       } else {
         v.forEach((p) => out.push({ pitch: p, start: t0, dur: 16, vel: 76 }))
       }
-    } else if (song.chordStyle === 'pulse') {
+    } else if (style === 'pulse') {
       const every = density === 0 ? 8 : density === 1 ? 4 : 2
       for (let s = 0; s < STEPS_PER_BAR; s += every) {
         const accent = s % 8 === 0
@@ -113,7 +161,7 @@ export function bassNotes(song: Song): AccNote[] {
     const triad = chordPitches(song.chords[bar], song.tonic, song.mode, 2)
     const fifth = root + (triad[2] - triad[0])
     const density = densityAt(song, bar)
-    if (song.drumStyle === 'dance' && density > 0) {
+    if (drumStyleAt(song, bar) === 'dance' && density > 0) {
       for (const s of [2, 6, 10, 14]) out.push({ pitch: root, start: t0 + s, dur: 2, vel: 96 })
       if (density === 2) for (const s of [0, 8]) out.push({ pitch: root, start: t0 + s, dur: 1, vel: 70 })
     } else if (density === 0) {
@@ -141,18 +189,19 @@ export function drumHits(song: Song): DrumHit[] {
     const local = section ? bar - section.start : bar
     const phraseStart = local % 4 === 0
     const phraseEnd = local % 4 === 3 || (!!section && local === section.bars - 1)
+    const style = drumStyleAt(song, bar)
     // Dạo đầu không trống; phần kết chỉ còn một tiếng cymbal + kick mở đầu.
     if (section?.kind === 'intro') continue
     if (section?.kind === 'outro') {
-      if (local === 0 && song.drumStyle !== 'none') {
+      if (local === 0 && style !== 'none') {
         add(bar, 'kick', [0], 110)
         add(bar, 'crash', [0], 100)
       }
       continue
     }
     // Vào điệp khúc luôn có cymbal.
-    if (section?.kind === 'chorus' && local === 0 && (song.drumStyle === 'ballad' || song.drumStyle === 'lofi')) add(bar, 'crash', [0], 95)
-    switch (song.drumStyle) {
+    if (section?.kind === 'chorus' && local === 0 && (style === 'ballad' || style === 'lofi')) add(bar, 'crash', [0], 95)
+    switch (style) {
       case 'pop':
         add(bar, 'kick', d === 2 ? [0, 8, 10] : [0, 8], 110)
         add(bar, 'snare', phraseEnd && d > 0 ? [4, 12, 13, 14, 15] : [4, 12], 100)

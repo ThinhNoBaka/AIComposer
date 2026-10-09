@@ -3,11 +3,20 @@
 
 import { DrumMachine, Soundfont, type Smplr } from 'smplr'
 import type { DrumSound } from '../core/accompany'
-import type { Song, TrackId } from '../core/song'
+import { CUSTOM_SYNTH, DEFAULT_SYNTH, trackEq, trackPan, trackReverb, vocalOffsetSec, type MixSettings, type Song, type SynthPreset, type TrackId, type VocalTrack } from '../core/song'
+import { vocalStartPlan } from '../core/vocal'
 import { getFx, type FxDef } from './fx'
-import { makeImpulse, synthDrum, synthFx, synthNote, type SynthFlavor } from './synth'
+import { customSynthNote, makeImpulse, synthDrum, synthFx, synthNote, type SynthFlavor } from './synth'
+import { loadVocalBuffer, vocalKey } from './vocalCache'
 
-export type Bus = TrackId | 'fx'
+export type Bus = TrackId | 'fx' | 'vocal'
+
+/** Chuỗi xử lý của một track: âm lượng → EQ 3 dải → pan → master, và nhánh gửi sang tiếng vang. */
+type Strip = { gain: GainNode; low: BiquadFilterNode; mid: BiquadFilterNode; high: BiquadFilterNode; pan: StereoPannerNode; send: GainNode }
+
+function setParam(p: AudioParam, v: number) {
+  if (Math.abs(p.value - v) > 1e-4) p.value = v
+}
 export type LoadState = 'loading' | 'ready' | 'fallback'
 
 type DrumInstance = ReturnType<typeof DrumMachine>
@@ -64,10 +73,14 @@ type SfEntry = { inst: Smplr | null; state: LoadState; promise: Promise<void> }
 export class Voices {
   readonly ctx: BaseAudioContext
   private master: GainNode
+  private strips: Record<Bus, Strip>
   private buses: Record<Bus, GainNode>
   private live: Record<Bus, GainNode>
   private sf = new Map<string, SfEntry>()
   private current: Record<Exclude<TrackId, 'drums'>, string> = { melody: '', chords: '', bass: '' }
+  private presets: Record<Exclude<TrackId, 'drums'>, SynthPreset> = { melody: DEFAULT_SYNTH, chords: DEFAULT_SYNTH, bass: DEFAULT_SYNTH }
+  private vocal: { key: string; offsetSec: number; buffer: AudioBuffer | null; promise: Promise<void> } | null = null
+  private vocalSources: AudioBufferSourceNode[] = []
   private drum: { kit: string; inst: DrumInstance | null; map: Partial<Record<DrumSound, string>>; state: LoadState; promise: Promise<void> } | null = null
   customFx: FxDef[] = []
   customBuffers = new Map<string, AudioBuffer>()
@@ -87,17 +100,32 @@ export class Voices {
     const wet = ctx.createGain()
     wet.gain.value = 0.22
     reverb.connect(wet).connect(this.master)
-    const mk = (send: number) => {
-      const g = ctx.createGain()
-      g.connect(this.master)
-      if (send > 0) {
-        const s = ctx.createGain()
-        s.gain.value = send
-        g.connect(s).connect(reverb)
-      }
-      return g
+    const mk = (send: number): Strip => {
+      const gain = ctx.createGain()
+      const low = ctx.createBiquadFilter()
+      low.type = 'lowshelf'
+      low.frequency.value = 250
+      low.gain.value = 0
+      const mid = ctx.createBiquadFilter()
+      mid.type = 'peaking'
+      mid.frequency.value = 1000
+      mid.Q.value = 0.8
+      mid.gain.value = 0
+      const high = ctx.createBiquadFilter()
+      high.type = 'highshelf'
+      high.frequency.value = 4000
+      high.gain.value = 0
+      const pan = ctx.createStereoPanner()
+      pan.pan.value = 0
+      const sendGain = ctx.createGain()
+      sendGain.gain.value = send
+      gain.connect(low).connect(mid).connect(high).connect(pan)
+      pan.connect(this.master)
+      pan.connect(sendGain).connect(reverb)
+      return { gain, low, mid, high, pan, send: sendGain }
     }
-    this.buses = { melody: mk(0.5), chords: mk(0.6), bass: mk(0), drums: mk(0.15), fx: mk(0.5) }
+    this.strips = { melody: mk(0.5), chords: mk(0.6), bass: mk(0), drums: mk(0.15), fx: mk(0.5), vocal: mk(0.3) }
+    this.buses = Object.fromEntries(Object.entries(this.strips).map(([k, st]) => [k, st.gain])) as Record<Bus, GainNode>
     this.live = this.makeLive()
   }
 
@@ -113,7 +141,8 @@ export class Voices {
 
   /** Trạng thái tải của từng track, để giao diện hiển thị. */
   status(): Record<TrackId, LoadState> {
-    const st = (track: Exclude<TrackId, 'drums'>): LoadState => this.sf.get(`${track}|${this.current[track]}`)?.state ?? 'loading'
+    const st = (track: Exclude<TrackId, 'drums'>): LoadState =>
+      this.current[track] === CUSTOM_SYNTH ? 'ready' : (this.sf.get(`${track}|${this.current[track]}`)?.state ?? 'loading')
     return { melody: st('melody'), chords: st('chords'), bass: st('bass'), drums: this.drum?.state ?? 'loading' }
   }
 
@@ -141,8 +170,83 @@ export class Voices {
   }
 
   setTrackInstrument(track: Exclude<TrackId, 'drums'>, name: string): Promise<void> {
-    this.current[track] = name
+    if (this.current[track] !== name) {
+      this.current[track] = name
+      if (name === CUSTOM_SYNTH) this.onStatus?.()
+    }
+    if (name === CUSTOM_SYNTH) return Promise.resolve()
     return this.loadSoundfont(track, name)
+  }
+
+  /** Nạp bản thu giọng (gốc hoặc đã chỉnh) của bài; không có giọng thì bỏ. */
+  setVocal(v: VocalTrack | undefined): Promise<void> {
+    if (!v) {
+      this.vocal = null
+      return Promise.resolve()
+    }
+    const key = vocalKey(v)
+    if (this.vocal?.key === key) {
+      this.vocal.offsetSec = vocalOffsetSec(v)
+      return this.vocal.promise
+    }
+    const entry = { key, offsetSec: vocalOffsetSec(v), buffer: null as AudioBuffer | null, promise: Promise.resolve() }
+    entry.promise = loadVocalBuffer(v).then(
+      (buf) => {
+        entry.buffer = buf
+        this.onStatus?.()
+      },
+      () => {
+        entry.buffer = null
+        this.onStatus?.()
+      },
+    )
+    this.vocal = entry
+    return entry.promise
+  }
+
+  /** Bản thu giọng đã nạp xong chưa (null = bài không có giọng). */
+  vocalReady(): boolean | null {
+    return this.vocal ? !!this.vocal.buffer : null
+  }
+
+  /** Phát bản thu từ đầu (bỏ qua `skip` giây đầu) tại thời điểm `time`. Chỉ một bản thu vang cùng lúc. */
+  vocalStart(time: number, skip = 0) {
+    const buf = this.vocal?.buffer
+    if (!buf || skip >= buf.duration) return
+    this.stopVocal(time)
+    const node = this.ctx.createBufferSource()
+    node.buffer = buf
+    node.connect(this.live.vocal)
+    node.start(time, skip)
+    node.onended = () => {
+      this.vocalSources = this.vocalSources.filter((x) => x !== node)
+    }
+    this.vocalSources.push(node)
+  }
+
+  /** Bắt đầu phát bài ở giữa bản thu: phát tiếp bản thu từ đúng chỗ. `songPosSec` là vị trí trong bài lúc `time`. */
+  vocalFrom(time: number, songPosSec: number) {
+    const v = this.vocal
+    if (!v?.buffer) return
+    const plan = vocalStartPlan(songPosSec, v.offsetSec, v.buffer.duration)
+    if (plan && plan.delay === 0) this.vocalStart(time, plan.bufOffset)
+  }
+
+  /** Vòng lặp quay lại: dừng bản thu đang vang lúc `time`, rồi phát tiếp nếu vị trí `songPosSec` nằm giữa bản thu. */
+  vocalWrap(time: number, songPosSec: number) {
+    this.stopVocal(time)
+    this.vocalFrom(time, songPosSec)
+  }
+
+  private stopVocal(at?: number) {
+    for (const n of this.vocalSources) {
+      try {
+        n.stop(at)
+      } catch {
+        /* đã dừng */
+      }
+    }
+    this.vocalSources = []
   }
 
   setDrumKit(kit: string): Promise<void> {
@@ -184,17 +288,37 @@ export class Voices {
       this.setTrackInstrument('bass', song.tracks.bass.instrument),
       this.setDrumKit(song.tracks.drums.instrument),
       this.prepareFx(song.fx.map((f) => f.fx)),
+      this.setVocal(song.vocal),
     ])
   }
 
+  private applyMix(bus: Bus, m: MixSettings, id: TrackId | 'vocal') {
+    const st = this.strips[bus]
+    setParam(st.gain.gain, m.muted ? 0 : m.volume)
+    const eq = trackEq(m)
+    setParam(st.low.gain, eq.low)
+    setParam(st.mid.gain, eq.mid)
+    setParam(st.high.gain, eq.high)
+    setParam(st.pan.pan, trackPan(m))
+    setParam(st.send.gain, trackReverb(m, id))
+  }
+
+  /** Âm lượng, pan, EQ, vang và âm sắc synth của mọi track theo bài. Gọi thường xuyên được (chỉ đổi khi khác). */
   setVolumes(song: Song) {
-    for (const t of ['melody', 'chords', 'bass', 'drums'] as const) {
-      this.buses[t].gain.value = song.tracks[t].muted ? 0 : song.tracks[t].volume
-    }
-    this.buses.fx.gain.value = song.fxVolume
+    for (const t of ['melody', 'chords', 'bass', 'drums'] as const) this.applyMix(t, song.tracks[t], t)
+    for (const t of ['melody', 'chords', 'bass'] as const) this.presets[t] = song.tracks[t].synth ?? DEFAULT_SYNTH
+    setParam(this.strips.fx.gain.gain, song.fxVolume)
+    if (song.vocal) {
+      this.applyMix('vocal', song.vocal, 'vocal')
+      if (this.vocal) this.vocal.offsetSec = vocalOffsetSec(song.vocal)
+    } else setParam(this.strips.vocal.gain.gain, 0)
   }
 
   note(track: Exclude<TrackId, 'drums'>, pitch: number, time: number, durSec: number, vel: number) {
+    if (this.current[track] === CUSTOM_SYNTH) {
+      customSynthNote(this.ctx, this.live[track], this.presets[track], pitch, time, durSec, vel)
+      return
+    }
     const entry = this.sf.get(`${track}|${this.current[track]}`)
     if (entry?.inst) {
       entry.inst.start({ note: pitch, time, duration: durSec, velocity: vel })
@@ -234,6 +358,7 @@ export class Voices {
   stopAll() {
     for (const e of this.sf.values()) e.inst?.stop()
     this.drum?.inst?.stop()
+    this.stopVocal()
     for (const g of Object.values(this.live)) g.disconnect()
     this.live = this.makeLive()
   }

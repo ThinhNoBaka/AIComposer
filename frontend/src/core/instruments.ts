@@ -1,3 +1,5 @@
+import { CUSTOM_SYNTH, DEFAULT_SYNTH, type SynthPreset, type Track } from './song'
+
 // Danh sách 128 nhạc cụ General MIDI theo đúng thứ tự program (0..127),
 // đặt tên theo bộ sample midi-js-soundfonts mà smplr dùng.
 
@@ -114,6 +116,7 @@ const VI_NAMES: Partial<Record<GmInstrument, string>> = {
 }
 
 export function instrumentLabel(name: string): string {
+  if (name === CUSTOM_SYNTH) return 'Synth tự chỉnh'
   const vi = VI_NAMES[name as GmInstrument]
   if (vi) return vi
   return name
@@ -125,6 +128,19 @@ export function instrumentLabel(name: string): string {
 export function gmProgram(name: string): number {
   const i = GM_INSTRUMENTS.indexOf(name as GmInstrument)
   return i < 0 ? 0 : i
+}
+
+/**
+ * Program GM khi xuất MIDI. Synth tự chỉnh không có trong GM: track bass dùng synth bass,
+ * tiếng vào chậm (attack dài) dùng pad, còn lại dùng synth lead gần dạng sóng nhất.
+ */
+export function trackProgram(track: Pick<Track, 'instrument' | 'synth'>, id: 'melody' | 'chords' | 'bass'): number {
+  if (track.instrument !== CUSTOM_SYNTH) return gmProgram(track.instrument)
+  const p = track.synth ?? DEFAULT_SYNTH
+  if (id === 'bass') return gmProgram(p.wave === 'square' || p.wave === 'sawtooth' ? 'synth_bass_2' : 'synth_bass_1')
+  if (p.attack >= 0.15) return gmProgram(p.wave === 'sine' || p.wave === 'triangle' ? 'pad_2_warm' : 'pad_3_polysynth')
+  const lead: Record<SynthPreset['wave'], GmInstrument> = { square: 'lead_1_square', sawtooth: 'lead_2_sawtooth', triangle: 'lead_4_chiff', sine: 'lead_3_calliope' }
+  return gmProgram(lead[p.wave])
 }
 
 export function instrumentFamilies(): { family: string; instruments: GmInstrument[] }[] {

@@ -39,6 +39,11 @@ function applyMoodRaw(song: Song, moodId: string): Song {
   }
   const mood = getMood(moodId)
   const fresh = songFromMood(mood, song.bars)
+  // Giữ cách trộn (pan, EQ, vang) người dùng đã chỉnh; nhạc cụ theo cảm xúc mới.
+  const keepMix = (id: keyof Song['tracks']) => {
+    const { pan, eq, reverb } = song.tracks[id]
+    return { ...fresh.tracks[id], ...(pan !== undefined && { pan }), ...(eq !== undefined && { eq }), ...(reverb !== undefined && { reverb }) }
+  }
   return {
     ...fresh,
     title: song.title,
@@ -47,6 +52,8 @@ function applyMoodRaw(song: Song, moodId: string): Song {
     lyricMap: song.lyricMap,
     fx: song.fx,
     fxVolume: song.fxVolume,
+    tracks: { melody: keepMix('melody'), chords: keepMix('chords'), bass: keepMix('bass'), drums: keepMix('drums') },
+    ...(song.vocal && { vocal: song.vocal }),
     melody: remapMelody(song.melody, song, fresh),
     // Bài đã hoàn thiện: giữ cấu trúc và vòng hợp âm (bậc hợp âm vẫn đúng ở giọng mới).
     ...(song.sections ? { sections: song.sections, chords: song.chords } : {}),

@@ -11,7 +11,10 @@ import { midiToSong } from './core/midiImport'
 import { copyClip, deleteNotes, duplicateNotes, pasteClip, type Clip } from './core/edit'
 import { describe as describeCommand, parseCommand, type Command } from './core/commands'
 import { remapMelody } from './core/melody'
-import { MAX_BARS, SECTION_LABEL, STEPS_PER_BAR, stepSeconds, validateSong, type FxEvent, type Locks, type Note, type Song, type Track, type TrackId } from './core/song'
+import { MAX_BARS, SECTION_LABEL, STEPS_PER_BAR, stepSeconds, validateSong, type FxEvent, type Locks, type Note, type Song, type Track, type TrackId, type VocalTrack } from './core/song'
+import { varyArrangement } from './core/arrange'
+import { STEM_LABEL, soloSong, stemIds } from './core/stems'
+import { zipStore, type ZipEntry } from './core/zip'
 import {
   addRound,
   appendHumming,
@@ -39,6 +42,7 @@ import { Menu } from './ui/Menu'
 import { Mixer } from './ui/Mixer'
 import { LABEL_W, ZOOMS } from './ui/geometry'
 import { Timeline, type LoopRange } from './ui/Timeline'
+import { VocalPanel } from './ui/VocalPanel'
 
 const MODE_LABEL: Record<Song['mode'], string> = {
   major: 'trưởng',
@@ -48,10 +52,11 @@ const MODE_LABEL: Record<Song['mode'], string> = {
   minorPentatonic: 'ngũ cung thứ',
 }
 
-type Tab = 'start' | 'lyrics' | 'mixer' | 'fx'
+type Tab = 'start' | 'lyrics' | 'vocal' | 'mixer' | 'fx'
 const TABS: { id: Tab; label: string }[] = [
   { id: 'start', label: 'Bắt đầu' },
   { id: 'lyrics', label: 'Lời' },
+  { id: 'vocal', label: 'Giọng hát' },
   { id: 'mixer', label: 'Nhạc cụ' },
   { id: 'fx', label: 'Hiệu ứng' },
 ]
@@ -442,20 +447,89 @@ export default function App() {
     setBusy('Đang xuất WAV…')
     try {
       const v = player.voices
-      const { blob, usedFallback } = await renderSongToWav(song, {
+      const { blob, usedFallback, vocalMissing } = await renderSongToWav(song, {
         // Bài ngắn xuất 2 vòng cho đủ nghe; bài dài xuất đúng 1 lần.
         loops,
         customFx,
         customBuffers: v?.customBuffers,
       })
       download(blob, `${safeName(song.title)}.wav`)
-      setMessage(usedFallback ? 'Đã xuất WAV. Một số nhạc cụ chưa tải được nên dùng synth dự phòng (kiểm tra kết nối mạng).' : `Đã xuất WAV (${formatDuration(songSeconds(song) * loops)}).`)
+      setMessage(vocalMissing ? 'Đã xuất WAV, nhưng chưa tải được giọng hát từ máy chủ nên bản này thiếu giọng.' : usedFallback ? 'Đã xuất WAV. Một số nhạc cụ chưa tải được nên dùng synth dự phòng (kiểm tra kết nối mạng).' : `Đã xuất WAV (${formatDuration(songSeconds(song) * loops)}).`)
     } catch (e) {
       setMessage(`Xuất WAV lỗi: ${e instanceof Error ? e.message : String(e)}`)
     } finally {
       setBusy(null)
     }
   }
+  // ----- Xuất từng track (stems) và gói trọn bài -----
+  const wavLoops = (s: Song) => (s.bars > 16 ? 1 : 2)
+  /** Render từng track riêng (cùng cách trộn và master), báo tiến độ qua nhãn menu Xuất. */
+  const renderStems = async (s: Song): Promise<{ name: string; blob: Blob }[]> => {
+    const ids = stemIds(s)
+    const out: { name: string; blob: Blob }[] = []
+    for (const [i, id] of ids.entries()) {
+      setBusy(`Đang xuất track ${i + 1}/${ids.length}…`)
+      const { blob } = await renderSongToWav(soloSong(s, id), { loops: wavLoops(s), customFx, customBuffers: player.voices?.customBuffers })
+      out.push({ name: `${safeName(s.title)} - ${STEM_LABEL[id]}.wav`, blob })
+    }
+    return out
+  }
+  const exportStems = async () => {
+    setBusy('Đang xuất từng track…')
+    try {
+      const stems = await renderStems(songRef.current)
+      // Tải lần lượt, cách nhau một chút để trình duyệt không gộp mất file.
+      for (const st of stems) {
+        download(st.blob, st.name)
+        await new Promise((r) => setTimeout(r, 300))
+      }
+      setMessage(stems.length ? `Đã xuất ${stems.length} track riêng.` : 'Bài chưa có track nào có tiếng để xuất.')
+    } catch (e) {
+      setMessage(`Xuất từng track lỗi: ${e instanceof Error ? e.message : String(e)}`)
+    } finally {
+      setBusy(null)
+    }
+  }
+  const exportZip = async () => {
+    const s = songRef.current
+    const name = safeName(s.title)
+    setBusy('Đang xuất bản mix…')
+    try {
+      const enc = new TextEncoder()
+      const bytes = async (b: Blob) => new Uint8Array(await b.arrayBuffer())
+      const mix = await renderSongToWav(s, { loops: wavLoops(s), customFx, customBuffers: player.voices?.customBuffers })
+      const files: ZipEntry[] = [
+        { name: `${name}.wav`, data: await bytes(mix.blob) },
+        { name: `${name}.mid`, data: songToMidi(s) },
+        { name: `${name}.aicomposer.json`, data: enc.encode(JSON.stringify(s, null, 2)) },
+      ]
+      if (s.lyrics?.trim()) files.push({ name: `${name} - loi.txt`, data: enc.encode(lyricsFile(s.title, s.lyrics)) })
+      for (const st of await renderStems(s)) files.push({ name: `stems/${st.name}`, data: await bytes(st.blob) })
+      setBusy('Đang đóng gói…')
+      download(new Blob([zipStore(files) as BlobPart], { type: 'application/zip' }), `${name}.zip`)
+      setMessage(mix.vocalMissing ? 'Đã xuất gói .zip, nhưng chưa tải được giọng hát từ máy chủ nên bản mix thiếu giọng.' : `Đã xuất gói .zip (${files.length} file).`)
+    } catch (e) {
+      setMessage(`Xuất gói lỗi: ${e instanceof Error ? e.message : String(e)}`)
+    } finally {
+      setBusy(null)
+    }
+  }
+
+  // ----- Giọng hát -----
+  const setVocal = useCallback((v: VocalTrack | undefined) => update((s) => ({ ...s, vocal: v })), [update])
+  const patchVocal = useCallback(
+    (patch: Partial<VocalTrack>, coalesce?: string) => update((s) => (s.vocal ? { ...s, vocal: { ...s.vocal, ...patch } } : s), coalesce),
+    [update],
+  )
+  /** Nhạc nền khi thu giọng: bỏ giọng cũ, bắt đầu đúng sau tiếng đếm nhịp. */
+  const playBacking = async (fromStep: number, at: number) => {
+    // Thu giọng chạy thẳng một mạch: tạm bỏ vùng lặp, dừng thu thì đặt lại.
+    player.setLoop(null)
+    await player.play(() => ({ ...songRef.current, vocal: undefined }), fromStep, at)
+    setStatus(player.voices?.status() ?? null)
+    setPlaying(true)
+  }
+
   const exportLyrics = () => {
     download(new Blob([lyricsFile(song.title, lyricsText)], { type: 'text/plain;charset=utf-8' }), `${safeName(song.title)} - loi.txt`)
   }
@@ -831,6 +905,8 @@ export default function App() {
             label={busy ?? 'Xuất'}
             items={[
               { label: 'Âm thanh WAV', hint: 'Nghe trên mọi máy', onClick: () => void exportWav(), disabled: !!busy },
+              { label: 'Từng track (stems)', hint: 'Mỗi track một file WAV', onClick: () => void exportStems(), disabled: !!busy },
+              { label: 'Gói trọn bài (.zip)', hint: 'WAV, MIDI, lời, file bài và stems', onClick: () => void exportZip(), disabled: !!busy },
               { label: 'MIDI', hint: 'Mở bằng phần mềm làm nhạc, có kèm lời', onClick: exportMidi },
               { label: 'Lời bài hát (.txt)', onClick: exportLyrics, disabled: !lines.length },
             ]}
@@ -980,7 +1056,39 @@ export default function App() {
                 onLock={setLock}
               />
             )}
-            {tab === 'mixer' && <Mixer song={song} status={status} onTrack={setTrack} onField={setField} onAudition={(id) => void audition(id)} />}
+            {tab === 'vocal' && (
+              <VocalPanel
+                song={song}
+                serverOk={serverOk}
+                projectId={cloudId ?? undefined}
+                cursor={cursor}
+                onEnsureAudio={async () => {
+                  await player.ensure()
+                  return player.context!
+                }}
+                onPlayBacking={playBacking}
+                onStopPlayback={() => {
+                  stop()
+                  player.setLoop(loopOn ? loopRange : null)
+                }}
+                onSetVocal={setVocal}
+                onPatchVocal={patchVocal}
+              />
+            )}
+            {tab === 'mixer' && (
+              <Mixer
+                song={song}
+                status={status}
+                onTrack={setTrack}
+                onField={setField}
+                onAudition={(id) => void audition(id)}
+                onVary={() => {
+                  update((s) => varyArrangement(s, randomSeed()))
+                  setMessage(song.sections ? 'Đã phối lại từng đoạn. Bấm Phát để nghe, bấm lại để thử phương án khác, hoặc Hoàn tác.' : 'Đã đổi cách đệm cho cả bài. Bấm Hoàn tác nếu chưa ưng.')
+                }}
+                onVocal={patchVocal}
+              />
+            )}
             {tab === 'fx' && (
               <FxPanel
                 song={song}

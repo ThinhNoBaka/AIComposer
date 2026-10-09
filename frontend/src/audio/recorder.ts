@@ -33,6 +33,8 @@ export class MicRecorder {
   private analyser: AnalyserNode | null = null
   private buf: Float32Array<ArrayBuffer> | null = null
   private source: MediaStreamAudioSourceNode | null = null
+  /** Thời điểm (đồng hồ AudioContext) MediaRecorder báo đã bắt đầu thu; null khi chưa thu. */
+  startedAt: number | null = null
 
   private ctx: AudioContext
 
@@ -57,6 +59,10 @@ export class MicRecorder {
     const mime = pickMime()
     this.rec = mime ? new MediaRecorder(this.stream, { mimeType: mime }) : new MediaRecorder(this.stream)
     this.chunks = []
+    this.startedAt = null
+    this.rec.onstart = () => {
+      this.startedAt = this.ctx.currentTime
+    }
     this.rec.ondataavailable = (e) => {
       if (e.data.size) this.chunks.push(e.data)
     }

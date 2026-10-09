@@ -31,7 +31,7 @@ export class ApiError extends Error {
   }
 }
 
-async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
+async function send(path: string, init: RequestInit = {}): Promise<Response> {
   let res: Response
   try {
     res = await fetch(`${BASE}${path}`, { ...init, headers: { 'X-Owner-Key': ownerKey(), ...(init.headers ?? {}) } })
@@ -48,6 +48,11 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
     }
     throw new ApiError(res.status, msg)
   }
+  return res
+}
+
+async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
+  const res = await send(path, init)
   return (res.status === 204 ? undefined : await res.json()) as T
 }
 
@@ -74,6 +79,59 @@ export const api = {
     if (opts.projectId) fd.append('project_id', opts.projectId)
     return request<HummingResult>('/api/humming', { method: 'POST', body: fd })
   },
+  uploadVocal: (audio: Blob, filename: string, opts: { offsetMs: number; bpm?: number; projectId?: string }) => {
+    const fd = new FormData()
+    fd.append('audio', audio, filename)
+    fd.append('offset_ms', String(Math.round(opts.offsetMs)))
+    if (opts.bpm) fd.append('bpm', String(opts.bpm))
+    if (opts.projectId) fd.append('project_id', opts.projectId)
+    return request<VocalTakeCreated>('/api/vocal/takes', { method: 'POST', body: fd })
+  },
+  listVocalTakes: (projectId?: string) => request<VocalTakeSummary[]>(`/api/vocal/takes${projectId ? `?project_id=${encodeURIComponent(projectId)}` : ''}`),
+  correctVocal: (id: string, body: VocalCorrectRequest) =>
+    request<VocalCorrectResult>(`/api/vocal/takes/${id}/correct`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }),
+  vocalAudio: async (id: string, version: 'original' | 'corrected') => (await send(`/api/vocal/takes/${id}/audio?version=${version}`)).arrayBuffer(),
+  deleteVocalTake: (id: string) => request<void>(`/api/vocal/takes/${id}`, { method: 'DELETE' }),
+}
+
+export type VocalTakeCreated = { id: string; duration_s: number; sr: number; offset_ms: number; bpm: number | null; project_id: string | null }
+
+export type VocalRecipeOut = {
+  strength: number
+  mode: 'melody' | 'scale' | 'chromatic'
+  retune_speed_ms: number
+  keep_vibrato: boolean
+  key: { tonic: number; mode: string } | null
+  notes_count: number
+}
+
+export type VocalTakeSummary = {
+  id: string
+  project_id: string | null
+  created_at: string
+  duration_s: number
+  sr: number
+  offset_ms: number
+  bpm: number | null
+  recipe: VocalRecipeOut | null
+  has_corrected: boolean
+}
+
+export type VocalCorrectRequest = {
+  strength: number
+  mode: 'melody' | 'scale' | 'chromatic'
+  retune_speed_ms: number
+  keep_vibrato: boolean
+  key?: { tonic: number; mode: Mode }
+  notes?: { pitch: number; start_s: number; end_s: number }[]
+}
+
+export type VocalCorrectResult = {
+  id: string
+  recipe: VocalRecipeOut
+  duration_s: number
+  elapsed_ms: number
+  f0: { hop_s: number; original: (number | null)[]; corrected: (number | null)[] }
 }
 
 export type HummingResult = {

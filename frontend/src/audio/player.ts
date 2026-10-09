@@ -1,7 +1,7 @@
 // Phát nhạc lặp vòng theo kiểu "lookahead scheduler": cứ 25 ms hẹn giờ trước các nốt
 // sẽ vang trong 150 ms tới, theo đồng hồ chính xác của AudioContext.
 
-import { buildEvents, type PlayEvent } from '../core/events'
+import { buildEvents, vocalEvent, type PlayEvent } from '../core/events'
 import { STEPS_PER_BAR, stepSeconds, type Song } from '../core/song'
 import { Voices } from './voices'
 
@@ -11,6 +11,7 @@ const TICK_MS = 25
 export function scheduleEvent(v: Voices, e: PlayEvent, time: number, stepSec: number) {
   if (e.kind === 'note') v.note(e.track, e.pitch, time, e.dur * stepSec, e.vel)
   else if (e.kind === 'drum') v.drumHit(e.sound, time, e.vel)
+  else if (e.kind === 'vocal') v.vocalStart(time, e.skip)
   else v.fx(e.fx, time)
 }
 
@@ -58,6 +59,7 @@ export class Player {
     void v.setTrackInstrument('bass', song.tracks.bass.instrument)
     void v.setDrumKit(song.tracks.drums.instrument)
     void v.prepareFx(song.fx.map((f) => f.fx))
+    void v.setVocal(song.vocal)
     v.setVolumes(song)
   }
 
@@ -77,7 +79,8 @@ export class Player {
     return { start: 0, len: total }
   }
 
-  async play(getSong: () => Song, fromStep = 0) {
+  /** `at`: thời điểm (đồng hồ AudioContext) bắt đầu phát, để khớp với tiếng đếm nhịp khi thu giọng. */
+  async play(getSong: () => Song, fromStep = 0, at?: number) {
     await this.ensure()
     this.stop()
     this.getSong = getSong
@@ -87,7 +90,10 @@ export class Player {
     const r = this.range(song)
     // Chỗ bắt đầu nằm ngoài vùng lặp thì phát từ đầu vùng lặp.
     if (fromStep < r.start || fromStep >= r.start + r.len) fromStep = r.start
-    this.anchorTime = this.ctx!.currentTime + 0.08
+    this.anchorTime = at !== undefined ? Math.max(at, this.ctx!.currentTime + 0.02) : this.ctx!.currentTime + 0.08
+    // Phát từ giữa bản thu giọng: phát tiếp bản thu từ đúng chỗ (sự kiện giọng ở đầu bản thu đã qua).
+    const voc = vocalEvent(song)
+    if (voc && fromStep > voc.start) this.voices!.vocalFrom(this.anchorTime, fromStep * stepSeconds(song.bpm))
     this.anchorStep = fromStep
     this.scheduledUpTo = fromStep
     this.playing = true
@@ -145,7 +151,11 @@ export class Player {
     const from = this.scheduledUpTo
     // Bước tuyệt đối abs ứng với vị trí ls + (abs - ls) mod len trong bài: mỗi vòng k dịch đi k*len bước.
     const at = (abs: number) => this.anchorTime + (abs - this.anchorStep) * stepSec
+    const hasVocal = events.some((e) => e.kind === 'vocal')
     for (let k = Math.floor((from - ls) / len); k <= Math.floor((target - ls) / len); k++) {
+      // Quay về đầu vòng: dừng bản thu giọng của vòng trước, phát tiếp từ đúng chỗ nếu đầu vòng nằm giữa bản thu.
+      const wrap = ls + k * len
+      if (hasVocal && wrap > this.anchorStep && wrap >= from && wrap < target) this.voices.vocalWrap(at(wrap), ls * stepSec)
       for (const e of events) {
         if (e.start < ls || e.start >= ls + len) continue
         const abs = ls + k * len + (e.start - ls)

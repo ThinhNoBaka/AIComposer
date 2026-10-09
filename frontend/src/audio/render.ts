@@ -15,12 +15,13 @@ const CHUNK = 4
 export async function renderSongToWav(
   song: Song,
   opts: { loops?: number; customFx?: FxDef[]; customBuffers?: Map<string, AudioBuffer> } = {},
-): Promise<{ blob: Blob; usedFallback: boolean }> {
+): Promise<{ blob: Blob; usedFallback: boolean; vocalMissing: boolean }> {
   const loops = opts.loops ?? 1
   const stepSec = stepSeconds(song.bpm)
   const loopSteps = song.bars * STEPS_PER_BAR
   const duration = loops * loopSteps * stepSec + 3
   let usedFallback = false
+  let vocalMissing = false
   const result = await renderOffline(
     async (ctx) => {
       const v = new Voices(ctx)
@@ -28,6 +29,7 @@ export async function renderSongToWav(
       v.customBuffers = opts.customBuffers ?? new Map()
       await v.prepareSong(song)
       usedFallback = Object.values(v.status()).some((s) => s === 'fallback')
+      vocalMissing = !!song.vocal && !song.vocal.muted && v.vocalReady() === false
       v.setVolumes(song)
       const events = buildEvents(song)
       const timed: { t: number; e: (typeof events)[number] }[] = []
@@ -54,5 +56,5 @@ export async function renderSongToWav(
     },
     { duration, sampleRate: 44100, channels: 2 },
   )
-  return { blob: result.toWav16(), usedFallback }
+  return { blob: result.toWav16(), usedFallback, vocalMissing }
 }

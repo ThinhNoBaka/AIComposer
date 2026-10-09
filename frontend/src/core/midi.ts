@@ -1,9 +1,9 @@
 import { Midi } from '@tonejs/midi'
 import { GM_DRUM_NOTE } from './accompany'
 import { buildEvents } from './events'
-import { gmProgram } from './instruments'
+import { trackProgram } from './instruments'
 import { alignLyrics, parseLyrics } from './lyrics'
-import type { Song } from './song'
+import { trackPan, type Song } from './song'
 
 /** midi-file ghi mỗi ký tự thành một byte: đổi chữ có dấu sang chuỗi byte UTF-8 trước. */
 function utf8Bytes(text: string): string {
@@ -27,10 +27,15 @@ export function songToMidi(song: Song): Uint8Array {
   ;(['melody', 'chords', 'bass'] as const).forEach((id, ch) => {
     tracks[id].name = utf8Bytes(names[id])
     tracks[id].channel = ch
-    tracks[id].instrument.number = gmProgram(song.tracks[id].instrument)
+    tracks[id].instrument.number = trackProgram(song.tracks[id], id)
   })
   tracks.drums.name = utf8Bytes(names.drums)
   tracks.drums.channel = 9
+  // Pan của từng track (CC10, 0 = trái, 1 = phải).
+  for (const id of ['melody', 'chords', 'bass', 'drums'] as const) {
+    const pan = trackPan(song.tracks[id])
+    if (pan !== 0) tracks[id].addCC({ number: 10, value: (pan + 1) / 2, ticks: 0 })
+  }
 
   // MIDI không có swing tự động: làm tròn vị trí ra tick, giữ cảm giác đung đưa.
   for (const e of buildEvents(song)) {

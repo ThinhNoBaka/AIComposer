@@ -3,6 +3,7 @@
 // Mọi hàm nhận BaseAudioContext nên chạy được cả khi phát trực tiếp lẫn khi render WAV.
 
 import type { DrumSound } from '../core/accompany'
+import type { SynthPreset } from '../core/song'
 
 const noiseCache = new WeakMap<BaseAudioContext, AudioBuffer>()
 
@@ -61,6 +62,35 @@ export function synthNote(
   osc.connect(filter).connect(g).connect(dest)
   osc.start(time)
   osc.stop(time + attack + dur + release + 0.05)
+}
+
+/** Synth tự chỉnh của người dùng: dao động → lọc thông thấp → đường bao ADSR. */
+export function customSynthNote(ctx: BaseAudioContext, dest: AudioNode, preset: SynthPreset, pitch: number, time: number, dur: number, vel: number) {
+  const freq = 440 * Math.pow(2, (pitch - 69) / 12)
+  const peak = (vel / 127) * (preset.wave === 'sine' || preset.wave === 'triangle' ? 0.4 : 0.26)
+  const attack = Math.max(0.003, preset.attack)
+  const decay = Math.max(0.005, preset.decay)
+  const release = Math.max(0.01, preset.release)
+  const sustain = Math.max(0.0001, peak * preset.sustain)
+  const osc = ctx.createOscillator()
+  osc.type = preset.wave
+  osc.frequency.setValueAtTime(freq, time)
+  const filter = ctx.createBiquadFilter()
+  filter.type = 'lowpass'
+  filter.frequency.setValueAtTime(Math.min(preset.cutoff, ctx.sampleRate / 2 - 100), time)
+  filter.Q.setValueAtTime(preset.q, time)
+  const g = ctx.createGain()
+  const len = Math.max(dur, 0.02)
+  const end = time + len
+  // Nốt ngắn hơn attack: chỉ lên tới mức tương ứng rồi nhả.
+  const a = Math.min(attack, len)
+  g.gain.setValueAtTime(0, time)
+  g.gain.linearRampToValueAtTime(peak * (a / attack), time + a)
+  if (a < len) g.gain.setTargetAtTime(sustain, time + a, decay / 3)
+  g.gain.setTargetAtTime(0, end, release / 4)
+  osc.connect(filter).connect(g).connect(dest)
+  osc.start(time)
+  osc.stop(end + release * 1.5 + 0.05)
 }
 
 /** Trống tổng hợp, dùng khi bộ trống sample chưa sẵn sàng hoặc thiếu tiếng. */
