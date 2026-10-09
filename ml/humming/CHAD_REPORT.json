@@ -1,0 +1,23 @@
+{
+  "rule": {
+    "files": 1200,
+    "empty_rate": 0.0016666666666666668,
+    "notes_per_sec_median": 2.00632343182794,
+    "short_note_rate": 0.0011117728806829463,
+    "octave_jump_rate": 0.003626964605828157,
+    "within_similarity": 0.42321032748133847,
+    "between_similarity": 0.2803990769060003,
+    "pairs_within": 6704
+  },
+  "model": {
+    "files": 1200,
+    "empty_rate": 0.0016666666666666668,
+    "notes_per_sec_median": 2.1312323819591263,
+    "short_note_rate": 0.0017933198834342075,
+    "octave_jump_rate": 0.003363579474342929,
+    "within_similarity": 0.42322226645819405,
+    "between_similarity": 0.2878186510090844,
+    "pairs_within": 6704
+  },
+  "files": 1200
+}

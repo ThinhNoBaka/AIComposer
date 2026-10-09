@@ -253,7 +253,8 @@ def load_model() -> OnsetModel | None:
 
 # ---------- Áp vào danh sách nốt ----------
 
-MIN_PART_FRAMES = 5  # mỗi mảnh sau khi chẻ dài ít nhất 50 ms
+# Mỗi mảnh sau khi chẻ dài ít nhất 80 ms. 50 ms làm giọng lạ (CHAD-Hummings) ra nhiều nốt vụn mà HumTrans không khá hơn.
+MIN_PART_FRAMES = 8
 MERGE_GAP_SEC = 0.06  # hai nốt cách nhau ít hơn mức này mới xét gộp
 MERGE_PITCH = 0.5  # nửa cung: lệch ít hơn coi là cùng cao độ
 DIP_RATIO = 0.5  # năng lượng chỗ nối tụt dưới nửa mức của hai nốt (−6 dB) là người ngân đã lấy hơi/nhấn lại: không gộp
