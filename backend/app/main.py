@@ -11,7 +11,7 @@ from sqlalchemy import text
 
 from .config import CORS_ORIGINS, STATIC_DIR, WARMUP
 from .db import engine, init_db
-from .routes import humming, projects
+from .routes import humming, projects, vocal
 
 
 log = logging.getLogger("uvicorn.error")
@@ -45,6 +45,7 @@ if CORS_ORIGINS:
 
 app.include_router(projects.router)
 app.include_router(humming.router)
+app.include_router(vocal.router)
 
 
 @app.get("/api/health")
