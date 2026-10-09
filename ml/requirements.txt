@@ -1,0 +1,4 @@
+numpy
+mido
+pretty_midi
+pytest

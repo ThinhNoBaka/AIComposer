@@ -1,5 +1,7 @@
 // Gợi ý hợp âm: phương án thay thế cho một ô, và hoà âm lại cả bài theo giai điệu.
+// Có mô hình học từ POP909 (harmonyModel.ts) cho giọng trưởng/thứ thì dùng mô hình, không thì dùng luật.
 
+import { barFit, barHistogram, modelFor, viterbi } from './harmonyModel'
 import { STEPS_PER_BAR, type Song } from './song'
 import { chordFunction, chordPcs, type Chord, type ChordFunction } from './theory'
 
@@ -7,7 +9,10 @@ function pc(m: number) {
   return ((m % 12) + 12) % 12
 }
 
-/** Độ hợp (-1..1) giữa hợp âm và các nốt giai điệu trong một ô nhịp. Không có nốt thì trả 0. */
+/**
+ * Độ hợp (-1..1) theo luật: tỉ lệ nốt giai điệu (theo trường độ, phách mạnh nhân đôi) thuộc hợp âm.
+ * Không có nốt thì trả 0.
+ */
 export function chordFit(song: Song, bar: number, chord: Chord): number {
   const start = bar * STEPS_PER_BAR
   const end = start + STEPS_PER_BAR
@@ -27,6 +32,16 @@ export function chordFit(song: Song, bar: number, chord: Chord): number {
   return total === 0 ? 0 : score / total
 }
 
+/**
+ * Độ hợp (-1..1) dùng để xếp và hiển thị phương án: theo mô hình POP909 nếu có mô hình cho giọng của bài,
+ * không thì theo luật (chordFit). Không có nốt thì trả 0.
+ */
+export function melodyFit(song: Song, bar: number, chord: Chord): number {
+  const model = modelFor(song.mode)
+  if (!model) return chordFit(song, bar, chord)
+  return barFit(model, barHistogram(song, bar), chord.degree)
+}
+
 export type ChordOption = { chord: Chord; fit: number; fn: ChordFunction; sameFunction: boolean }
 
 /** Các hợp âm có thể thay cho ô `bar`, cùng chức năng xếp trước, rồi theo độ hợp với giai điệu. */
@@ -37,7 +52,7 @@ export function chordOptions(song: Song, bar: number): ChordOption[] {
     .filter((d) => d !== current.degree)
     .map((d) => {
       const chord = { degree: d, seventh: current.degree < 0 ? (song.chords.find((c) => c.degree >= 0)?.seventh ?? false) : current.seventh }
-      return { chord, fit: chordFit(song, bar, chord), fn: chordFunction(d), sameFunction: chordFunction(d) === fn }
+      return { chord, fit: melodyFit(song, bar, chord), fn: chordFunction(d), sameFunction: chordFunction(d) === fn }
     })
     .sort((a, b) => Number(b.sameFunction) - Number(a.sameFunction) || b.fit - a.fit)
 }
@@ -51,9 +66,25 @@ function transitionCost(a: number, b: number): number {
 
 /**
  * Hoà âm lại cả bài theo giai điệu (thuật toán Viterbi trên 7 bậc).
- * Ô không có nốt thì ưu tiên giữ hợp âm cũ.
+ * Dùng HMM học từ POP909 khi có mô hình cho giọng của bài, không thì dùng luật.
+ * Ô không có nốt thì ưu tiên giữ hợp âm cũ; ô trống (bậc -1) cũng được chọn hợp âm như trước.
  */
 export function harmonize(song: Song): Chord[] {
+  const seventh = song.chords.find((c) => c.degree >= 0)?.seventh ?? false
+  const model = modelFor(song.mode)
+  if (!model || song.bars <= 0) return harmonizeByRules(song)
+  const hists = Array.from({ length: song.bars }, (_, bar) => barHistogram(song, bar))
+  const path = viterbi(model, hists, {
+    current: song.chords.map((c) => c.degree),
+    keepBonus: 0.5,
+    keepBonusSilent: 2,
+    endBonus: 3,
+  })
+  return path.map((degree) => ({ degree, seventh }))
+}
+
+/** Hoà âm theo luật cũ: chordFit + chi phí chuyển hợp âm. Dùng khi không có mô hình cho giọng của bài. */
+export function harmonizeByRules(song: Song): Chord[] {
   const seventh = song.chords.find((c) => c.degree >= 0)?.seventh ?? false
   const n = song.bars
   const degrees = [0, 1, 2, 3, 4, 5, 6]
