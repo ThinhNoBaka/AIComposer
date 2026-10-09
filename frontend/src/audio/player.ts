@@ -29,6 +29,10 @@ export class Player {
   private cachedEvents: PlayEvent[] = []
   playing = false
   onStatus?: () => void
+  /** Vùng lặp [start, end) tính bằng bước; null = lặp cả bài. */
+  private loop: { start: number; end: number } | null = null
+  /** Tiếng gõ mỗi phách khi phát (chỉ nghe lúc phát, không có trong file xuất). */
+  metronome = false
 
   /** Tạo AudioContext ở lần bấm đầu tiên (trình duyệt chặn âm thanh trước khi người dùng tương tác). */
   async ensure(): Promise<Voices> {
@@ -57,6 +61,22 @@ export class Player {
     v.setVolumes(song)
   }
 
+  /** Đặt vùng lặp. Đổi khi đang phát thì nơi gọi nên phát lại từ vị trí hiện tại. */
+  setLoop(loop: { start: number; end: number } | null) {
+    this.loop = loop && loop.end > loop.start ? loop : null
+  }
+
+  /** Vùng đang lặp, đã cắt cho nằm trong bài. */
+  private range(song: Song): { start: number; len: number } {
+    const total = song.bars * STEPS_PER_BAR
+    const l = this.loop
+    if (l && l.start < total) {
+      const end = Math.min(total, l.end)
+      return { start: l.start, len: end - l.start }
+    }
+    return { start: 0, len: total }
+  }
+
   async play(getSong: () => Song, fromStep = 0) {
     await this.ensure()
     this.stop()
@@ -64,6 +84,9 @@ export class Player {
     const song = getSong()
     this.sync(song)
     this.bpm = song.bpm
+    const r = this.range(song)
+    // Chỗ bắt đầu nằm ngoài vùng lặp thì phát từ đầu vùng lặp.
+    if (fromStep < r.start || fromStep >= r.start + r.len) fromStep = r.start
     this.anchorTime = this.ctx!.currentTime + 0.08
     this.anchorStep = fromStep
     this.scheduledUpTo = fromStep
@@ -95,10 +118,10 @@ export class Player {
   /** Vị trí đầu phát trong vòng, để vẽ vạch chạy trên piano roll. */
   position(): number | null {
     if (!this.playing || !this.ctx || !this.cachedSong) return null
-    const total = this.cachedSong.bars * STEPS_PER_BAR
+    const r = this.range(this.cachedSong)
     const s = this.absStep(this.ctx.currentTime)
-    if (s < 0) return 0
-    return s % total
+    if (s < r.start) return Math.max(0, s)
+    return r.start + ((s - r.start) % r.len)
   }
 
   private tick() {
@@ -114,20 +137,41 @@ export class Player {
       this.bpm = song.bpm
     }
     this.voices.setVolumes(song)
-    const total = song.bars * STEPS_PER_BAR
+    const { start: ls, len } = this.range(song)
     const stepSec = stepSeconds(this.bpm)
     const target = this.absStep(now + LOOKAHEAD_SEC)
     if (target <= this.scheduledUpTo) return
     const events = this.events(song)
     const from = this.scheduledUpTo
-    for (let k = Math.floor(from / total); k <= Math.floor(target / total); k++) {
+    // Bước tuyệt đối abs ứng với vị trí ls + (abs - ls) mod len trong bài: mỗi vòng k dịch đi k*len bước.
+    const at = (abs: number) => this.anchorTime + (abs - this.anchorStep) * stepSec
+    for (let k = Math.floor((from - ls) / len); k <= Math.floor((target - ls) / len); k++) {
       for (const e of events) {
-        const abs = k * total + e.start
-        if (abs >= from && abs < target) {
-          scheduleEvent(this.voices, e, this.anchorTime + (abs - this.anchorStep) * stepSec, stepSec)
+        if (e.start < ls || e.start >= ls + len) continue
+        const abs = ls + k * len + (e.start - ls)
+        if (abs >= from && abs < target) scheduleEvent(this.voices, e, at(abs), stepSec)
+      }
+      if (this.metronome) {
+        for (let st = Math.ceil(ls / 4) * 4; st < ls + len; st += 4) {
+          const abs = ls + k * len + (st - ls)
+          if (abs >= from && abs < target) this.click(at(abs), st % STEPS_PER_BAR === 0)
         }
       }
     }
     this.scheduledUpTo = target
+  }
+
+  /** Tiếng gõ máy đếm nhịp: phách đầu ô cao hơn. Đi thẳng ra loa, không qua bộ trộn của bài. */
+  private click(time: number, downbeat: boolean) {
+    const ctx = this.ctx!
+    const osc = ctx.createOscillator()
+    const g = ctx.createGain()
+    osc.frequency.value = downbeat ? 1760 : 1175
+    g.gain.setValueAtTime(0.0001, time)
+    g.gain.exponentialRampToValueAtTime(0.35, time + 0.003)
+    g.gain.exponentialRampToValueAtTime(0.0001, time + 0.06)
+    osc.connect(g).connect(ctx.destination)
+    osc.start(time)
+    osc.stop(time + 0.07)
   }
 }

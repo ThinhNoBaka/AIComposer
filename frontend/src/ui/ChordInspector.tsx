@@ -11,6 +11,8 @@ type Props = {
   onHarmonize: () => void
   onToggleSevenths: () => void
   onClose: () => void
+  /** Khoá hợp âm: chỉ xem, không đổi. */
+  locked: boolean
 }
 
 function FitMeter({ fit }: { fit: number }) {
@@ -26,13 +28,13 @@ function FitMeter({ fit }: { fit: number }) {
 }
 
 /** Bảng dưới timeline: đổi hợp âm của ô đang chọn, và các thao tác cho cả vòng hợp âm. */
-export function ChordInspector({ song, bar, onSetChord, onPreviewChord, onNextProgression, onHarmonize, onToggleSevenths, onClose }: Props) {
+export function ChordInspector({ song, bar, onSetChord, onPreviewChord, onNextProgression, onHarmonize, onToggleSevenths, onClose, locked }: Props) {
   const sevenths = !!song.chords.find((c) => !isNoChord(c))?.seventh
   const chord = bar !== null ? song.chords[bar] : undefined
   const empty = isNoChord(chord)
   const sec = bar !== null ? sectionAt(song, bar) : undefined
   return (
-    <div className="inspector">
+    <fieldset className="inspector" disabled={locked} title={locked ? 'Hợp âm đang khoá. Bỏ Khoá hợp âm để đổi.' : undefined}>
       <div className="insp-main">
         {chord && bar !== null ? (
           <>
@@ -95,6 +97,6 @@ export function ChordInspector({ song, bar, onSetChord, onPreviewChord, onNextPr
           Hợp âm màu (7)
         </button>
       </div>
-    </div>
+    </fieldset>
   )
 }

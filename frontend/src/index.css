@@ -1277,6 +1277,34 @@ select,
   stroke: var(--tension);
   stroke-width: 2.5;
 }
+.note.is-sel {
+  stroke: var(--ink);
+  stroke-width: 2;
+}
+.roll.is-locked .note {
+  cursor: default;
+}
+.sel-box {
+  fill: var(--accent-soft);
+  stroke: var(--accent-line);
+  stroke-dasharray: 4 3;
+  pointer-events: none;
+}
+.loop-band {
+  fill: var(--accent-soft);
+  pointer-events: none;
+}
+.loop-region {
+  position: absolute;
+  top: 0;
+  height: 7px;
+  background: var(--line-strong);
+  border-radius: 0 0 3px 3px;
+  pointer-events: none;
+}
+.loop-region.is-on {
+  background: var(--accent);
+}
 .syl {
   font-size: 10.5px;
   font-weight: 700;
@@ -1320,7 +1348,29 @@ select,
   gap: 10px 16px;
   align-items: flex-start;
   padding: 10px 12px;
+  margin: 0;
+  min-width: 0;
+  border: 0;
   border-top: 1px solid var(--line);
+}
+.inspector:disabled .insp-main,
+.inspector:disabled .insp-actions {
+  opacity: 0.6;
+}
+.cmd {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--line);
+}
+.cmd input {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.cmd-echo {
+  padding: 0 12px 8px;
+  margin: 0;
 }
 .insp-main {
   flex: 1 1 360px;

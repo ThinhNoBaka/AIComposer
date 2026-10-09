@@ -1,4 +1,5 @@
 import { useMemo, useRef, useState } from 'react'
+import type { Locks } from '../core/song'
 import { TONE_LABEL, rhymeScheme, rhymeSuggestions, type Alignment, type LyricLine, type ToneHint } from '../core/lyrics'
 
 type Props = {
@@ -12,6 +13,8 @@ type Props = {
   onFixHint: (hint: ToneHint) => void
   onSeekLine: (step: number) => void
   onDownload: () => void
+  locks: Locks
+  onLock: (key: 'lyrics' | 'align', on: boolean) => void
 }
 
 const EXAMPLE = `[Đoạn 1]
@@ -21,7 +24,7 @@ Em đi qua con đường xưa
 Nhớ em nhiều lắm em ơi
 Mưa ơi đừng rơi nữa`
 
-export function LyricsPanel({ text, lines, alignment, hasMelody, onText, onMelodyFromLyrics, onSplitNotes, onFixHint, onSeekLine, onDownload }: Props) {
+export function LyricsPanel({ text, lines, alignment, hasMelody, onText, onMelodyFromLyrics, onSplitNotes, onFixHint, onSeekLine, onDownload, locks, onLock }: Props) {
   const areaRef = useRef<HTMLTextAreaElement>(null)
   const [rhymeWord, setRhymeWord] = useState('')
   const scheme = useMemo(() => rhymeScheme(lines), [lines])
@@ -55,16 +58,37 @@ export function LyricsPanel({ text, lines, alignment, hasMelody, onText, onMelod
         className="lyrics-text"
         value={text}
         onChange={(e) => onText(e.target.value)}
+        readOnly={!!locks.lyrics}
         placeholder={EXAMPLE}
         rows={9}
         spellCheck={false}
         aria-label="Lời bài hát"
       />
       <div className="row wrap">
-        <button className="btn btn-primary" onClick={onMelodyFromLyrics} disabled={!lines.length} title="Viết giai điệu mới đi theo thanh điệu của lời, thay giai điệu đang có">
+        <button
+          className={`btn btn-sm btn-toggle${locks.lyrics ? ' is-on' : ''}`}
+          onClick={() => onLock('lyrics', !locks.lyrics)}
+          aria-pressed={!!locks.lyrics}
+          title="Khoá lời: không sửa được chữ (tránh lỡ tay xoá)"
+        >
+          Khoá lời
+        </button>
+        <button
+          className={`btn btn-sm btn-toggle${locks.align ? ' is-on' : ''}`}
+          onClick={() => onLock('align', !locks.align)}
+          aria-pressed={!!locks.align}
+          disabled={!lines.length || !hasMelody}
+          title="Khoá căn lời: mỗi chữ gắn chặt vào nốt đang mang nó. Dời, kéo dài nốt thì chữ đi theo nốt, không trượt sang nốt khác"
+        >
+          Khoá căn lời
+        </button>
+      </div>
+      {locks.align && <p className="hint">Đang khoá căn lời: chữ đi theo nốt. Sửa lời hoặc thêm nốt mới thì bỏ khoá để căn lại.</p>}
+      <div className="row wrap">
+        <button className="btn btn-primary" onClick={onMelodyFromLyrics} disabled={!lines.length || locks.melody || locks.align} title="Viết giai điệu mới đi theo thanh điệu của lời, thay giai điệu đang có">
           Viết giai điệu theo lời
         </button>
-        <button className="btn" onClick={onSplitNotes} disabled={!short.length} title="Chẻ đôi nốt dài ở các câu thiếu nốt">
+        <button className="btn" onClick={onSplitNotes} disabled={!short.length || locks.melody || locks.align} title="Chẻ đôi nốt dài ở các câu thiếu nốt">
           Chia nốt cho đủ chữ
         </button>
         <button className="btn btn-quiet" onClick={onDownload} disabled={!lines.length}>
@@ -124,7 +148,7 @@ export function LyricsPanel({ text, lines, alignment, hasMelody, onText, onMelod
                     Câu {h.line + 1}, chữ <b>{h.word.replace(/[^\p{L}]/gu, '')}</b> (thanh {TONE_LABEL[h.tone]}): giai điệu {h.went === 'up' ? 'đi lên' : 'đi xuống'} nên dễ
                     nghe thành <b>{h.heard}</b>.
                   </span>
-                  <button className="btn btn-sm" onClick={() => onFixHint(h)}>
+                  <button className="btn btn-sm" onClick={() => onFixHint(h)} disabled={!!locks.melody}>
                     {h.fix === 'lower' ? 'Hạ nốt' : 'Nâng nốt'}
                   </button>
                 </li>

@@ -16,6 +16,10 @@ type Props = {
   projectId?: string
   /** Bài đã có giai điệu và còn chỗ: cho ghép đoạn ngân mới nối tiếp. */
   canAppend: boolean
+  /** Khoá giai điệu: chỉ được ghép tiếp, không thay giai điệu đang có. */
+  melodyLocked?: boolean
+  /** Khoá hợp âm: không tự chọn lại hợp âm. */
+  chordsLocked?: boolean
   onApply: (result: HummingResult, opts: ApplyOptions) => void
   onAppend: (result: HummingResult, opts: { autoHarmony: boolean }) => void
 }
@@ -48,7 +52,7 @@ function RawNotes({ result }: { result: HummingResult }) {
   )
 }
 
-export function HummingPanel({ song, serverOk, projectId, canAppend, onApply, onAppend }: Props) {
+export function HummingPanel({ song, serverOk, projectId, canAppend, melodyLocked = false, chordsLocked = false, onApply, onAppend }: Props) {
   const [phase, setPhase] = useState<Phase>('idle')
   const [countIn, setCountIn] = useState(true)
   const [beat, setBeat] = useState(0)
@@ -262,7 +266,7 @@ export function HummingPanel({ song, serverOk, projectId, canAppend, onApply, on
               <button className={how === 'append' ? 'is-on' : ''} onClick={() => setHow('append')} disabled={!canAppend}>
                 Ghép tiếp sau đoạn trước
               </button>
-              <button className={how === 'replace' ? 'is-on' : ''} onClick={() => setHow('replace')}>
+              <button className={how === 'replace' ? 'is-on' : ''} onClick={() => setHow('replace')} disabled={melodyLocked}>
                 Thay toàn bộ giai điệu
               </button>
             </div>
@@ -288,8 +292,8 @@ export function HummingPanel({ song, serverOk, projectId, canAppend, onApply, on
               </>
             )}
             <label className="check">
-              <input type="checkbox" checked={autoHarmony} onChange={(e) => setAutoHarmony(e.target.checked)} />
-              Tự chọn hợp âm hợp với giai điệu
+              <input type="checkbox" checked={autoHarmony && !chordsLocked} disabled={chordsLocked} onChange={(e) => setAutoHarmony(e.target.checked)} />
+              {chordsLocked ? 'Hợp âm đang khoá: giữ hợp âm cũ, ô mới thêm thì máy chọn' : 'Tự chọn hợp âm hợp với giai điệu'}
             </label>
           </div>
           <div className="row wrap">
@@ -306,6 +310,8 @@ export function HummingPanel({ song, serverOk, projectId, canAppend, onApply, on
             ) : (
               <button
                 className="btn btn-primary"
+                disabled={melodyLocked && song.melody.length > 0}
+                title={melodyLocked && song.melody.length > 0 ? 'Giai điệu đang khoá: bỏ khoá để thay, hoặc ghép tiếp sau đoạn trước' : undefined}
                 onClick={() => {
                   onApply(result, { useKey, useBpm: useBpm && !sameBpm, autoHarmony })
                   setResult(null)

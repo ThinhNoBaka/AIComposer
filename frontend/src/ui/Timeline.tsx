@@ -4,6 +4,7 @@
 
 import { useMemo, useRef, useState, type PointerEvent as RPointerEvent } from 'react'
 import { getFx, type FxDef } from '../audio/fx'
+import { deleteNotes, moveNotes, notesInBox } from '../core/edit'
 import { MAX_BARS, SECTION_LABEL, STEPS_PER_BAR, newId, type FxEvent, type Note, type Song } from '../core/song'
 import { FUNCTION_LABEL, chordFunction, chordName, chordPcs, isInScale, isNoChord } from '../core/theory'
 import { GHOST_BARS, LABEL_W, pitchLabel } from './geometry'
@@ -17,6 +18,9 @@ const shortFx = (label: string) => label.replace(/\s*\(.*\)\s*$/, '')
 type Drag =
   | { kind: 'move'; id: string; offsetStep: number }
   | { kind: 'resize'; id: string }
+  | { kind: 'box'; s0: number; p0: number; s1: number; p1: number; add: boolean }
+
+export type LoopRange = { start: number; end: number }
 
 type Props = {
   song: Song
@@ -39,12 +43,23 @@ type Props = {
   onPreviewFx: (id: string) => void
   gridRef: React.RefObject<HTMLDivElement | null>
   scrollRef: React.RefObject<HTMLDivElement | null>
+  /** Nốt đang chọn (Shift+bấm, Shift+kéo khung). */
+  selected: Set<string>
+  onSelect: (ids: string[]) => void
+  /** Khoá giai điệu: chỉ chọn được (để chép), không thêm, dời, xoá. */
+  melodyLocked: boolean
+  /** Vùng lặp (bước), kéo trên thước ô nhịp để đặt. */
+  loop: LoopRange | null
+  loopOn: boolean
+  onLoop: (loop: LoopRange) => void
 }
 
 export function Timeline(p: Props) {
   const { song, stepW, lockScale, grid } = p
   const svgRef = useRef<SVGSVGElement>(null)
   const [drag, setDrag] = useState<Drag | null>(null)
+  const [ruler, setRuler] = useState<{ bar0: number; bar1: number; moved: boolean } | null>(null)
+  const sel = p.selected
   const viewBars = Math.min(MAX_BARS, song.bars + GHOST_BARS)
   const viewSteps = viewBars * STEPS_PER_BAR
   const barW = STEPS_PER_BAR * stepW
@@ -105,6 +120,17 @@ export function Timeline(p: Props) {
   const onBackgroundDown = (e: RPointerEvent<SVGRectElement>) => {
     if (e.button !== 0) return
     const { step, pitch } = pointToCell(e)
+    if (e.shiftKey || p.melodyLocked) {
+      // Kéo khung chọn nhiều nốt.
+      svgRef.current?.setPointerCapture(e.pointerId)
+      setDrag({ kind: 'box', s0: step, p0: pitch, s1: step + 1, p1: pitch, add: e.shiftKey })
+      return
+    }
+    if (sel.size) {
+      // Đang chọn nhiều nốt: bấm ra ngoài là bỏ chọn, chưa thêm nốt.
+      p.onSelect([])
+      return
+    }
     const start = snap(step)
     const note: Note = { id: newId(), pitch, start, dur: Math.min(grid, viewSteps - start), vel: 90 }
     p.onMelody([...song.melody, note], `drag:${note.id}`)
@@ -113,42 +139,103 @@ export function Timeline(p: Props) {
     setDrag({ kind: 'resize', id: note.id })
   }
 
+  const removeNotes = (n: Note) => {
+    if (p.melodyLocked) return
+    const ids = sel.has(n.id) ? sel : new Set([n.id])
+    p.onMelody(deleteNotes(song.melody, ids))
+    p.onSelect([])
+  }
+
   const onNoteDown = (e: RPointerEvent<SVGRectElement>, n: Note) => {
     e.stopPropagation()
     if (e.button === 2) return
+    if (e.shiftKey) {
+      // Shift+bấm: thêm/bỏ nốt khỏi nhóm đang chọn.
+      p.onSelect(sel.has(n.id) ? [...sel].filter((x) => x !== n.id) : [...sel, n.id])
+      return
+    }
+    if (!sel.has(n.id)) p.onSelect([n.id])
+    p.onPreview(n.pitch)
+    if (p.melodyLocked) return
     const rect = (e.target as SVGRectElement).getBoundingClientRect()
     svgRef.current?.setPointerCapture(e.pointerId)
     if (e.clientX > rect.right - 6) setDrag({ kind: 'resize', id: n.id })
     else {
       setDrag({ kind: 'move', id: n.id, offsetStep: pointToCell(e).step - n.start })
-      p.onPreview(n.pitch)
     }
   }
 
   const onMove = (e: RPointerEvent<SVGSVGElement>) => {
     if (!drag) return
     const { step, pitch } = pointToCell(e)
+    if (drag.kind === 'box') {
+      if (step + 1 !== drag.s1 || pitch !== drag.p1) setDrag({ ...drag, s1: step + 1, p1: pitch })
+      return
+    }
     const n = song.melody.find((x) => x.id === drag.id)
     if (!n) return
     if (drag.kind === 'resize') {
       const end = Math.min(viewSteps, Math.max(n.start + grid, snap(step) + grid))
       if (end - n.start !== n.dur) p.onMelody(song.melody.map((x) => (x.id === n.id ? { ...x, dur: end - n.start } : x)), `drag:${n.id}`)
     } else {
-      const start = Math.max(0, Math.min(viewSteps - n.dur, snap(step - drag.offsetStep)))
-      if (start !== n.start || pitch !== n.pitch) {
-        if (pitch !== n.pitch) p.onPreview(pitch)
-        p.onMelody(song.melody.map((x) => (x.id === n.id ? { ...x, start, pitch } : x)), `drag:${n.id}`)
+      // Dời cả nhóm theo nốt đang kéo. Khoá thang âm thì dời theo hàng (bậc trong thang) cho nốt không lạc thang.
+      const ids = sel.has(n.id) ? sel : new Set([n.id])
+      const dStep = snap(step - drag.offsetStep) - n.start
+      const dRow = rowOf(pitch) - rowOf(n.pitch)
+      if (dStep === 0 && dRow === 0) return
+      let next = moveNotes(song.melody, ids, dStep, 0, viewSteps)
+      if (dRow) {
+        const rowsOf = [...ids].map((id) => rowOf(song.melody.find((x) => x.id === id)?.pitch ?? 0))
+        const d = Math.max(-Math.min(...rowsOf), Math.min(rows.length - 1 - Math.max(...rowsOf), dRow))
+        next = next.map((x) => (ids.has(x.id) ? { ...x, pitch: rows[rowOf(x.pitch) + d] } : x))
+        p.onPreview(rows[rowOf(n.pitch) + d])
       }
+      p.onMelody(next, `drag:${n.id}`)
     }
   }
 
-  const removeNote = (id: string) => p.onMelody(song.melody.filter((x) => x.id !== id))
-
-  const seekAt = (e: RPointerEvent<HTMLDivElement>) => {
-    const rect = e.currentTarget.getBoundingClientRect()
-    const beat = Math.floor((e.clientX - rect.left) / (stepW * 4))
-    p.onSeek(Math.max(0, Math.min(song.bars * STEPS_PER_BAR - 4, beat * 4)))
+  const endDrag = () => {
+    if (drag?.kind === 'box') {
+      const ids = notesInBox(song.melody, drag.s0, drag.s1, drag.p0, drag.p1)
+      p.onSelect(drag.add ? [...new Set([...sel, ...ids])] : ids)
+    }
+    setDrag(null)
   }
+
+  // Thước: bấm để chọn chỗ phát; kéo qua nhiều ô để đặt vùng lặp.
+  const rulerAt = (e: RPointerEvent<HTMLDivElement>) => {
+    const rect = e.currentTarget.getBoundingClientRect()
+    const x = e.clientX - rect.left
+    return { beat: Math.floor(x / (stepW * 4)), bar: Math.max(0, Math.min(song.bars - 1, Math.floor(x / barW))) }
+  }
+  const rulerDown = (e: RPointerEvent<HTMLDivElement>) => {
+    if (e.button !== 0) return
+    e.currentTarget.setPointerCapture(e.pointerId)
+    const { bar } = rulerAt(e)
+    setRuler({ bar0: bar, bar1: bar, moved: false })
+  }
+  const rulerMove = (e: RPointerEvent<HTMLDivElement>) => {
+    if (!ruler) return
+    const { bar } = rulerAt(e)
+    if (bar !== ruler.bar1) setRuler({ ...ruler, bar1: bar, moved: true })
+  }
+  const rulerUp = (e: RPointerEvent<HTMLDivElement>) => {
+    if (!ruler) return
+    if (ruler.moved) {
+      const a = Math.min(ruler.bar0, ruler.bar1)
+      const b = Math.max(ruler.bar0, ruler.bar1) + 1
+      p.onLoop({ start: a * STEPS_PER_BAR, end: b * STEPS_PER_BAR })
+    } else {
+      const { beat } = rulerAt(e)
+      p.onSeek(Math.max(0, Math.min(song.bars * STEPS_PER_BAR - 4, beat * 4)))
+    }
+    setRuler(null)
+  }
+  const loopShown = ruler?.moved
+    ? { start: Math.min(ruler.bar0, ruler.bar1) * STEPS_PER_BAR, end: (Math.max(ruler.bar0, ruler.bar1) + 1) * STEPS_PER_BAR }
+    : p.loop
+  const loopRect = loopShown ? { left: loopShown.start * stepW, width: (loopShown.end - loopShown.start) * stepW } : null
+  const loopCls = `loop-region${p.loopOn || ruler?.moved ? ' is-on' : ''}`
 
   // Làn hiệu ứng: gộp các hiệu ứng cùng một phách thành một khối.
   const fxGroups = useMemo(() => {
@@ -178,7 +265,16 @@ export function Timeline(p: Props) {
         <div className="tl-head">
           <div className="lane lane-ruler">
             <div className="lane-label">Ô nhịp</div>
-            <div className="lane-body" style={{ width }} onPointerDown={seekAt} title="Bấm để chọn chỗ bắt đầu phát">
+            <div
+              className="lane-body"
+              style={{ width }}
+              onPointerDown={rulerDown}
+              onPointerMove={rulerMove}
+              onPointerUp={rulerUp}
+              onPointerCancel={() => setRuler(null)}
+              title="Bấm để chọn chỗ bắt đầu phát, kéo qua nhiều ô để đặt vùng lặp"
+            >
+              {loopRect && <div className={loopCls} style={loopRect} aria-label="Vùng lặp" />}
               {Array.from({ length: viewBars }, (_, b) => (
                 <div key={b} className={`ruler-bar${b >= song.bars ? ' is-ghost' : ''}`} style={{ left: b * barW, width: barW }}>
                   {b % labelEvery === 0 && <span>{b + 1}</span>}
@@ -254,13 +350,13 @@ export function Timeline(p: Props) {
               ref={svgRef}
               width={width}
               height={height}
-              className="roll"
+              className={`roll${p.melodyLocked ? ' is-locked' : ''}`}
               onPointerMove={onMove}
-              onPointerUp={() => setDrag(null)}
+              onPointerUp={endDrag}
               onPointerCancel={() => setDrag(null)}
               onContextMenu={(e) => e.preventDefault()}
               role="application"
-              aria-label="Piano roll: bấm vào lưới để thêm nốt, kéo để di chuyển, kéo mép phải để đổi độ dài, chuột phải hoặc bấm đúp để xoá"
+              aria-label="Piano roll: bấm vào lưới để thêm nốt, kéo để di chuyển, kéo mép phải để đổi độ dài, chuột phải hoặc bấm đúp để xoá. Giữ Shift để chọn nhiều nốt"
             >
               {cells.map((c) => (
                 <rect key={`${c.r}:${c.from}`} x={c.from * barW} y={c.r * ROW_H} width={(c.to - c.from) * barW} height={ROW_H} className={c.cls} />
@@ -271,6 +367,7 @@ export function Timeline(p: Props) {
               {Array.from({ length: viewSteps / 4 + 1 }, (_, b) => (
                 <line key={b} x1={b * 4 * stepW} x2={b * 4 * stepW} y1={0} y2={height} className={b % 4 === 0 ? 'roll-bar' : 'roll-beat'} />
               ))}
+              {loopRect && p.loopOn && <rect x={loopRect.left} y={0} width={loopRect.width} height={height} className="loop-band" />}
               <rect x={0} y={0} width={width} height={height} fill="transparent" onPointerDown={onBackgroundDown} />
               {song.melody.map((n) => {
                 const x = n.start * stepW + 1
@@ -278,8 +375,8 @@ export function Timeline(p: Props) {
                 const y = rowOf(n.pitch) * ROW_H + 2
                 const syl = p.syllables?.get(n.id)
                 const cls = `note${isInScale(n.pitch, song.tonic, song.mode) ? '' : ' note-out'}${p.hintIds.has(n.id) ? ' note-hint' : ''}${
-                  drag?.kind === 'move' && drag.id === n.id ? ' note-drag' : ''
-                }`
+                  drag?.kind === 'move' && (drag.id === n.id || sel.has(n.id)) ? ' note-drag' : ''
+                }${sel.has(n.id) ? ' is-sel' : ''}`
                 return (
                   <g key={n.id}>
                     <rect
@@ -290,10 +387,10 @@ export function Timeline(p: Props) {
                       rx={3}
                       className={cls}
                       onPointerDown={(e) => onNoteDown(e, n)}
-                      onDoubleClick={() => removeNote(n.id)}
+                      onDoubleClick={() => removeNotes(n)}
                       onContextMenu={(e) => {
                         e.preventDefault()
-                        removeNote(n.id)
+                        removeNotes(n)
                       }}
                     >
                       <title>{`${pitchLabel(n.pitch)}${syl && syl !== '–' ? `, chữ “${syl}”` : ''}. Kéo để di chuyển, kéo mép phải để đổi độ dài, chuột phải để xoá`}</title>
@@ -306,6 +403,15 @@ export function Timeline(p: Props) {
                   </g>
                 )
               })}
+              {drag?.kind === 'box' && (
+                <rect
+                  className="sel-box"
+                  x={Math.min(drag.s0, drag.s1) * stepW}
+                  y={Math.min(rowOf(drag.p0), rowOf(drag.p1)) * ROW_H}
+                  width={Math.abs(drag.s1 - drag.s0) * stepW}
+                  height={(Math.abs(rowOf(drag.p0) - rowOf(drag.p1)) + 1) * ROW_H}
+                />
+              )}
             </svg>
             {playhead}
           </div>

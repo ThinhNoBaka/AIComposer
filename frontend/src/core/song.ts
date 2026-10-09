@@ -76,6 +76,21 @@ export type Song = {
   sections?: Section[]
   /** Lời bài hát, mỗi dòng một câu; dòng dạng [Điệp khúc] là nhãn. */
   lyrics?: string
+  /** Các phần đang khoá: máy không tự đổi (và giai điệu/lời không sửa tay được). */
+  locks?: Locks
+  /** Chữ gắn cố định vào từng nốt (id nốt -> âm tiết) khi khoá căn lời. */
+  lyricMap?: Record<string, string>
+}
+
+export type Locks = {
+  /** Không tạo, biến tấu, ngân đè hay sửa tay giai điệu. */
+  melody?: boolean
+  /** Không đổi hợp âm đang có (đổi cảm xúc, hoà âm, đổi vòng). Ô mới thêm vẫn được chọn hợp âm. */
+  chords?: boolean
+  /** Không sửa chữ của lời. */
+  lyrics?: boolean
+  /** Chữ gắn chặt vào nốt: dời, sửa nốt không làm chữ trượt sang nốt khác. */
+  align?: boolean
 }
 
 let counter = 0
@@ -125,6 +140,9 @@ export function validateSong(raw: unknown): string | null {
     }
   }
   if (s.lyrics !== undefined && (typeof s.lyrics !== 'string' || s.lyrics.length > 20000)) return 'Lời bài hát bị hỏng hoặc quá dài.'
+  if (s.locks !== undefined && (typeof s.locks !== 'object' || s.locks === null)) return 'Thông tin khoá bị hỏng.'
+  if (s.lyricMap !== undefined && (typeof s.lyricMap !== 'object' || s.lyricMap === null || Object.values(s.lyricMap).some((v) => typeof v !== 'string')))
+    return 'Thông tin căn lời bị hỏng.'
   if (!s.tracks || !s.tracks.melody || !s.tracks.chords || !s.tracks.bass || !s.tracks.drums) return 'Thiếu thông tin track.'
   return null
 }

@@ -14,7 +14,7 @@ function utf8Bytes(text: string): string {
 export function songToMidi(song: Song): Uint8Array {
   const midi = new Midi()
   midi.header.setTempo(song.bpm)
-  midi.header.name = song.title
+  midi.header.name = utf8Bytes(song.title)
   const ticksPerStep = midi.header.ppq / 4
 
   const tracks = {
@@ -25,11 +25,11 @@ export function songToMidi(song: Song): Uint8Array {
   }
   const names = { melody: 'Giai điệu', chords: 'Hợp âm', bass: 'Bass', drums: 'Trống' }
   ;(['melody', 'chords', 'bass'] as const).forEach((id, ch) => {
-    tracks[id].name = names[id]
+    tracks[id].name = utf8Bytes(names[id])
     tracks[id].channel = ch
     tracks[id].instrument.number = gmProgram(song.tracks[id].instrument)
   })
-  tracks.drums.name = names.drums
+  tracks.drums.name = utf8Bytes(names.drums)
   tracks.drums.channel = 9
 
   // MIDI không có swing tự động: làm tròn vị trí ra tick, giữ cảm giác đung đưa.
@@ -51,9 +51,10 @@ export function songToMidi(song: Song): Uint8Array {
     }
   }
   if (song.lyrics?.trim()) {
-    const al = alignLyrics(parseLyrics(song.lyrics), song.melody)
+    // Khoá căn lời: dùng đúng chữ đã gắn vào từng nốt, không căn lại.
+    const map = song.locks?.align && song.lyricMap ? new Map(Object.entries(song.lyricMap)) : alignLyrics(parseLyrics(song.lyrics), song.melody).syllableOf
     for (const n of song.melody) {
-      const syl = al.syllableOf.get(n.id)
+      const syl = map.get(n.id)
       if (syl && syl !== '–') midi.header.meta.push({ type: 'lyrics', text: utf8Bytes(syl), ticks: Math.round(n.start * ticksPerStep) })
     }
     midi.header.meta.sort((a, b) => a.ticks - b.ticks)

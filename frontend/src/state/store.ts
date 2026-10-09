@@ -21,6 +21,12 @@ export type Action =
 
 /** Đổi mood: lấy preset mới (key, tempo, hợp âm, nhạc cụ), giữ giai điệu và chuyển nó sang thang mới. */
 export function applyMood(song: Song, moodId: string): Song {
+  const next = applyMoodRaw(song, moodId)
+  // Khoá hợp âm: đổi cảm xúc vẫn giữ nguyên hợp âm đã chọn (bậc hợp âm vẫn đúng ở giọng mới).
+  return song.locks?.chords ? { ...next, chords: song.chords, locks: song.locks } : { ...next, locks: song.locks, lyricMap: song.lyricMap }
+}
+
+function applyMoodRaw(song: Song, moodId: string): Song {
   if (moodId === NO_MOOD) {
     // Bỏ chọn cảm xúc: giữ giọng, tempo, giai điệu; ô nhịp trống, không hợp âm, không trống.
     return {
@@ -37,6 +43,8 @@ export function applyMood(song: Song, moodId: string): Song {
     ...fresh,
     title: song.title,
     seed: song.seed,
+    lyrics: song.lyrics,
+    lyricMap: song.lyricMap,
     fx: song.fx,
     fxVolume: song.fxVolume,
     melody: remapMelody(song.melody, song, fresh),

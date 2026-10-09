@@ -113,3 +113,21 @@ describe('bỏ chọn cảm xúc', () => {
     expect(on.chords.every((c) => c.degree >= 0)).toBe(true)
   })
 })
+
+describe('khoá', () => {
+  it('khoá hợp âm: đổi cảm xúc giữ nguyên hợp âm, vẫn giữ lời', () => {
+    const base = { ...songFromMood(getMood('vui'), 8), lyrics: 'la la', locks: { chords: true } }
+    const chords = base.chords.map((c, i) => ({ ...c, degree: i % 3 }))
+    const next = applyMood({ ...base, chords }, 'buon')
+    expect(next.chords).toEqual(chords)
+    expect(next.lyrics).toBe('la la')
+    expect(next.locks).toEqual({ chords: true })
+    expect(validateSong(next)).toBeNull()
+  })
+
+  it('không khoá: đổi cảm xúc lấy vòng hợp âm mới nhưng không mất lời', () => {
+    const base = { ...songFromMood(getMood('vui'), 8), lyrics: 'la la' }
+    const next = applyMood(base, 'buon')
+    expect(next.lyrics).toBe('la la')
+  })
+})
