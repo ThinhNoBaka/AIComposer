@@ -26,6 +26,7 @@ class Project(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now, onupdate=_now)
     recordings: Mapped[list["Recording"]] = relationship(back_populates="project", cascade="all, delete-orphan")
+    vocal_takes: Mapped[list["VocalTake"]] = relationship(back_populates="project", cascade="all, delete-orphan")
 
 
 class Recording(Base):
@@ -56,3 +57,26 @@ class Transcription(Base):
     elapsed_ms: Mapped[int] = mapped_column(Integer, default=0)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
     recording: Mapped[Recording] = relationship(back_populates="transcriptions")
+
+
+class VocalTake(Base):
+    """Một lần thu giọng hát (tab "Giọng hát"): bản gốc, bản đã chỉnh cao độ và công thức chỉnh.
+
+    Audio lưu dạng WAV PCM16 mono đã giải mã lại (không giữ file trình duyệt gửi lên). Cột bytes để `deferred`
+    để liệt kê danh sách không phải đọc audio.
+    """
+
+    __tablename__ = "vocal_takes"
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
+    owner: Mapped[str] = mapped_column(String(64), index=True)
+    project_id: Mapped[str | None] = mapped_column(ForeignKey("projects.id", ondelete="CASCADE"), nullable=True, index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+    offset_ms: Mapped[float] = mapped_column(Float, default=0)  # bản thu bắt đầu ở mốc này của bài (ms)
+    bpm: Mapped[float | None] = mapped_column(Float, nullable=True)
+    sr: Mapped[int] = mapped_column(Integer)
+    duration_s: Mapped[float] = mapped_column(Float, default=0)
+    original: Mapped[bytes] = mapped_column(LargeBinary, deferred=True)
+    corrected: Mapped[bytes | None] = mapped_column(LargeBinary, nullable=True, deferred=True)
+    recipe: Mapped[dict | None] = mapped_column(JSON, nullable=True)  # strength, mode, retune_speed_ms, keep_vibrato, key
+    analysis: Mapped[dict | None] = mapped_column(JSON, nullable=True, deferred=True)  # F0 pYIN đã dò, để chỉnh lại khỏi dò lần nữa
+    project: Mapped[Project | None] = relationship(back_populates="vocal_takes")
