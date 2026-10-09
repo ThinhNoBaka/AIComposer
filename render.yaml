@@ -13,7 +13,11 @@ services:
           name: aicomposer-db
           property: connectionString
       # Viết lời và hiểu lệnh bằng AI. sync: false: điền giá trị ở tab Environment trên Render, không để trong repo.
-      # Để trống thì app vẫn chạy, chỉ ẩn phần AI.
+      # Chỉ cần một khoá: GEMINI_API_KEY (miễn phí, aistudio.google.com) là đủ. Để trống hết thì app vẫn chạy, chỉ ẩn phần AI.
+      - key: GEMINI_API_KEY
+        sync: false
+      - key: GROQ_API_KEY
+        sync: false
       - key: ANTHROPIC_API_KEY
         sync: false
 
