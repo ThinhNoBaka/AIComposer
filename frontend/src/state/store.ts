@@ -2,7 +2,8 @@
 // gộp thành một bước lịch sử nhờ `coalesce`.
 
 import { useEffect, useReducer } from 'react'
-import { getMood, songFromMood } from '../core/moods'
+import { NO_MOOD, emptySong, getMood, songFromMood } from '../core/moods'
+import { NO_CHORD } from '../core/theory'
 import { remapMelody } from '../core/melody'
 import { validateSong, type Song } from '../core/song'
 
@@ -20,6 +21,16 @@ export type Action =
 
 /** Đổi mood: lấy preset mới (key, tempo, hợp âm, nhạc cụ), giữ giai điệu và chuyển nó sang thang mới. */
 export function applyMood(song: Song, moodId: string): Song {
+  if (moodId === NO_MOOD) {
+    // Bỏ chọn cảm xúc: giữ giọng, tempo, giai điệu; ô nhịp trống, không hợp âm, không trống.
+    return {
+      ...song,
+      moodId: NO_MOOD,
+      chords: song.chords.map(() => ({ ...NO_CHORD })),
+      drumStyle: 'none',
+      tracks: { ...song.tracks, drums: { ...song.tracks.drums, muted: true } },
+    }
+  }
   const mood = getMood(moodId)
   const fresh = songFromMood(mood, song.bars)
   return {
@@ -79,7 +90,7 @@ function loadSaved(): Song | null {
 }
 
 export function initialHistory(): History {
-  const present = loadSaved() ?? songFromMood(getMood('vui'))
+  const present = loadSaved() ?? emptySong()
   return { past: [], present, future: [], lastKey: null, lastAt: 0 }
 }
 

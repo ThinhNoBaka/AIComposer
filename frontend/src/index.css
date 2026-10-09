@@ -1167,6 +1167,18 @@ select,
 .chord:hover {
   border-color: var(--line-strong);
 }
+.chord-empty {
+  background: transparent;
+  box-shadow: none;
+  border: 1px dashed transparent;
+}
+.chord-empty:hover {
+  border-color: var(--line-strong);
+  background: var(--btn-hover);
+}
+.chord-empty.is-on {
+  box-shadow: 0 0 0 1px var(--accent);
+}
 .chord.is-on {
   border-color: var(--accent);
   box-shadow:
@@ -1328,7 +1340,7 @@ select,
   color: var(--ink);
   font-size: 15px;
 }
-.insp-title .btn {
+.insp-title .btn:first-of-type {
   margin-left: auto;
 }
 .insp-empty {

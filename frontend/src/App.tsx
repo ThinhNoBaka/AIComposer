@@ -4,7 +4,7 @@ import { Player } from './audio/player'
 import { renderSongToWav } from './audio/render'
 import type { FxDef } from './audio/fx'
 import type { LoadState } from './audio/voices'
-import { MOODS, getMood, progressionToChords } from './core/moods'
+import { MOODS, NO_MOOD, getMood, progressionToChords } from './core/moods'
 import { continueMelody, generateMelody, shiftMelody, varyMelody } from './core/melody'
 import { songToMidi } from './core/midi'
 import { MAX_BARS, SECTION_LABEL, STEPS_PER_BAR, stepSeconds, validateSong, type FxEvent, type Note, type Song, type Track, type TrackId } from './core/song'
@@ -24,7 +24,7 @@ import {
 } from './core/humming'
 import { alignLyrics, fixToneHint, lyricsFile, melodyFromLyrics, parseLyrics, splitNotesForLyrics, type ToneHint } from './core/lyrics'
 import { harmonize } from './core/suggest'
-import { chordPitches, degreeToMidi, midiToDegree, snapToScale, NOTE_NAMES, type Chord } from './core/theory'
+import { chordPitches, degreeToMidi, isNoChord, midiToDegree, snapToScale, NOTE_NAMES, type Chord } from './core/theory'
 import { useSongStore } from './state/store'
 import { ChordInspector } from './ui/ChordInspector'
 import { CloudList } from './ui/CloudList'
@@ -259,6 +259,7 @@ export default function App() {
 
   const previewChord = useCallback(
     async (c: Chord) => {
+      if (isNoChord(c)) return
       const s = songRef.current
       const v = await player.ensure()
       v.setVolumes(s)
@@ -628,14 +629,16 @@ export default function App() {
               <>
                 <section className="side-sec">
                   <h3 className="side-h">1. Chọn cảm xúc</h3>
-                  <p className="hint">Mỗi cảm xúc chọn sẵn giọng, tempo, vòng hợp âm, nhạc cụ và nhịp trống.</p>
+                  <p className="hint">
+                    Mỗi cảm xúc chọn sẵn giọng, tempo, vòng hợp âm, nhạc cụ và nhịp trống. Bấm lại cảm xúc đang chọn để bỏ chọn: ô nhịp trở về trống, giai điệu vẫn giữ.
+                  </p>
                   <div className="moods">
                     {MOODS.map((m) => (
                       <button
                         key={m.id}
                         className={`mood mood-${m.id}${song.moodId === m.id ? ' is-on' : ''}`}
                         onClick={() => {
-                          dispatch({ type: 'mood', moodId: m.id })
+                          dispatch({ type: 'mood', moodId: song.moodId === m.id ? NO_MOOD : m.id })
                           setCandidates(null)
                         }}
                         aria-pressed={song.moodId === m.id}
@@ -812,7 +815,12 @@ export default function App() {
             onPreviewChord={(c) => void previewChord(c)}
             onNextProgression={nextProgression}
             onHarmonize={() => update((s) => ({ ...s, chords: harmonize(s) }))}
-            onToggleSevenths={() => update((s) => ({ ...s, chords: s.chords.map((c) => ({ ...c, seventh: !s.chords[0]?.seventh })) }))}
+            onToggleSevenths={() =>
+              update((s) => {
+                const on = !s.chords.find((c) => !isNoChord(c))?.seventh
+                return { ...s, chords: s.chords.map((c) => (isNoChord(c) ? c : { ...c, seventh: on })) }
+              })
+            }
             onClose={() => setSelectedBar(null)}
           />
           <p className="foot">

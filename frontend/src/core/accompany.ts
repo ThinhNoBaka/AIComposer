@@ -1,7 +1,7 @@
 // Đệm tự động: hợp âm (block / nhịp / rải), bass và trống, suy ra từ vòng hợp âm.
 
 import { STEPS_PER_BAR, densityAt, sectionAt, type Song } from './song'
-import { chordPitches } from './theory'
+import { chordPitches, isNoChord } from './theory'
 
 export type AccNote = { pitch: number; start: number; dur: number; vel: number }
 
@@ -24,6 +24,10 @@ export function voiceChords(song: Song): number[][] {
   let prev: number[] | null = null
   for (const chord of song.chords) {
     const base = chordPitches(chord, song.tonic, song.mode, 3)
+    if (!base.length) {
+      voicings.push([])
+      continue
+    }
     const cands: number[][] = []
     for (let inv = 0; inv < base.length; inv++) {
       const v = base.map((p, i) => (i < inv ? p + 12 : p)).sort((a, b) => a - b)
@@ -55,6 +59,7 @@ export function chordTrackNotes(song: Song): AccNote[] {
   const out: AccNote[] = []
   const voicings = voiceChords(song)
   voicings.forEach((v, bar) => {
+    if (!v.length) return
     const t0 = bar * STEPS_PER_BAR
     const density = densityAt(song, bar)
     if (sectionAt(song, bar)?.kind === 'outro') {
@@ -102,6 +107,7 @@ function bassRoot(song: Song, bar: number): number {
 export function bassNotes(song: Song): AccNote[] {
   const out: AccNote[] = []
   for (let bar = 0; bar < song.bars; bar++) {
+    if (isNoChord(song.chords[bar])) continue
     const t0 = bar * STEPS_PER_BAR
     const root = bassRoot(song, bar)
     const triad = chordPitches(song.chords[bar], song.tonic, song.mode, 2)

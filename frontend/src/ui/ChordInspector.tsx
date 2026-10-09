@@ -1,6 +1,6 @@
 import { SECTION_LABEL, sectionAt, type Song } from '../core/song'
 import { chordOptions } from '../core/suggest'
-import { FUNCTION_LABEL, chordFunction, chordName, type Chord } from '../core/theory'
+import { FUNCTION_LABEL, NO_CHORD, chordFunction, chordName, isNoChord, type Chord } from '../core/theory'
 
 type Props = {
   song: Song
@@ -27,8 +27,9 @@ function FitMeter({ fit }: { fit: number }) {
 
 /** Bảng dưới timeline: đổi hợp âm của ô đang chọn, và các thao tác cho cả vòng hợp âm. */
 export function ChordInspector({ song, bar, onSetChord, onPreviewChord, onNextProgression, onHarmonize, onToggleSevenths, onClose }: Props) {
-  const sevenths = !!song.chords[0]?.seventh
+  const sevenths = !!song.chords.find((c) => !isNoChord(c))?.seventh
   const chord = bar !== null ? song.chords[bar] : undefined
+  const empty = isNoChord(chord)
   const sec = bar !== null ? sectionAt(song, bar) : undefined
   return (
     <div className="inspector">
@@ -40,8 +41,19 @@ export function ChordInspector({ song, bar, onSetChord, onPreviewChord, onNextPr
                 Ô {bar + 1}
                 {sec && ` · ${SECTION_LABEL[sec.kind]}`}
               </span>
-              <b>{chordName(chord, song.tonic, song.mode)}</b>
-              <span className={`tag fn-${chordFunction(chord.degree)}`}>{FUNCTION_LABEL[chordFunction(chord.degree)]}</span>
+              {empty ? (
+                <b>Chưa có hợp âm</b>
+              ) : (
+                <>
+                  <b>{chordName(chord, song.tonic, song.mode)}</b>
+                  <span className={`tag fn-${chordFunction(chord.degree)}`}>{FUNCTION_LABEL[chordFunction(chord.degree)]}</span>
+                </>
+              )}
+              {!empty && (
+                <button className="btn btn-quiet btn-sm insp-clear" onClick={() => onSetChord(bar, { ...NO_CHORD })}>
+                  Để trống ô này
+                </button>
+              )}
               <button className="btn btn-quiet btn-sm" onClick={onClose}>
                 Đóng
               </button>

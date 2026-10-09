@@ -73,13 +73,21 @@ export function harmonyMode(mode: Mode): 'major' | 'minor' | 'dorian' {
 }
 
 export type Chord = {
-  /** Bậc gốc 0..6 trong thang 7 nốt. */
+  /** Bậc gốc 0..6 trong thang 7 nốt; -1 là ô trống (không có hợp âm). */
   degree: number
   seventh: boolean
 }
 
+/** Ô nhịp không có hợp âm: không đệm hợp âm, bass ở ô này. */
+export const NO_CHORD: Chord = { degree: -1, seventh: false }
+
+export function isNoChord(chord: Chord | undefined): boolean {
+  return !chord || chord.degree < 0
+}
+
 /** Cao độ các nốt của hợp âm (quãng tám cho trước của nốt gốc, đã xếp tăng dần). */
 export function chordPitches(chord: Chord, tonicPc: number, mode: Mode, rootOctave = 3): number[] {
+  if (isNoChord(chord)) return []
   const hm = harmonyMode(mode)
   // Tên quãng tám n (C4) ứng với khối MIDI thứ n+1 (C4 = 60 = 5 * 12).
   const base = (rootOctave + 1) * 7 + chord.degree
@@ -93,6 +101,7 @@ export function chordPcs(chord: Chord, tonicPc: number, mode: Mode): number[] {
 }
 
 export function chordName(chord: Chord, tonicPc: number, mode: Mode): string {
+  if (isNoChord(chord)) return ''
   const [r, t, f, s] = chordPitches(chord, tonicPc, mode)
   const third = t - r
   const fifth = f - r

@@ -3,7 +3,7 @@
 
 import { createRng, type Rng } from './rng'
 import { STEPS_PER_BAR, newId, type Note, type Song } from './song'
-import { chordPcs, degreeToMidi, midiToDegree, snapToScale } from './theory'
+import { chordPcs, degreeToMidi, isNoChord, midiToDegree, snapToScale } from './theory'
 
 /** Khoảng cao độ của giai điệu (C4..G5). */
 export const MELODY_LOW = 60
@@ -118,7 +118,14 @@ export type MelodyOptions = {
   previous?: Note[]
 }
 
-export function generateMelody(song: Song, opts: MelodyOptions): Note[] {
+/** Ô chưa có hợp âm được coi như hợp âm chủ khi chọn nốt cho giai điệu. */
+export function withTonicForRests(song: Song): Song {
+  if (!song.chords.some(isNoChord)) return song
+  return { ...song, chords: song.chords.map((c) => (isNoChord(c) ? { degree: 0, seventh: false } : c)) }
+}
+
+export function generateMelody(input: Song, opts: MelodyOptions): Note[] {
+  const song = withTonicForRests(input)
   const rng = createRng(opts.seed)
   const { lowDeg, highDeg } = melodyRange(song)
   const ctx: Ctx = { song, rng, lowDeg, highDeg }

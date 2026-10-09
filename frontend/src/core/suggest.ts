@@ -32,11 +32,11 @@ export type ChordOption = { chord: Chord; fit: number; fn: ChordFunction; sameFu
 /** Các hợp âm có thể thay cho ô `bar`, cùng chức năng xếp trước, rồi theo độ hợp với giai điệu. */
 export function chordOptions(song: Song, bar: number): ChordOption[] {
   const current = song.chords[bar]
-  const fn = chordFunction(current.degree)
+  const fn = chordFunction(Math.max(0, current.degree))
   return [0, 1, 2, 3, 4, 5, 6]
     .filter((d) => d !== current.degree)
     .map((d) => {
-      const chord = { degree: d, seventh: current.seventh }
+      const chord = { degree: d, seventh: current.degree < 0 ? (song.chords.find((c) => c.degree >= 0)?.seventh ?? false) : current.seventh }
       return { chord, fit: chordFit(song, bar, chord), fn: chordFunction(d), sameFunction: chordFunction(d) === fn }
     })
     .sort((a, b) => Number(b.sameFunction) - Number(a.sameFunction) || b.fit - a.fit)
@@ -54,7 +54,7 @@ function transitionCost(a: number, b: number): number {
  * Ô không có nốt thì ưu tiên giữ hợp âm cũ.
  */
 export function harmonize(song: Song): Chord[] {
-  const seventh = song.chords[0]?.seventh ?? false
+  const seventh = song.chords.find((c) => c.degree >= 0)?.seventh ?? false
   const n = song.bars
   const degrees = [0, 1, 2, 3, 4, 5, 6]
   const cost: number[][] = []

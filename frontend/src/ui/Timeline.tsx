@@ -5,7 +5,7 @@
 import { useMemo, useRef, useState, type PointerEvent as RPointerEvent } from 'react'
 import { getFx, type FxDef } from '../audio/fx'
 import { MAX_BARS, SECTION_LABEL, STEPS_PER_BAR, newId, type FxEvent, type Note, type Song } from '../core/song'
-import { FUNCTION_LABEL, chordFunction, chordName, chordPcs, isInScale } from '../core/theory'
+import { FUNCTION_LABEL, chordFunction, chordName, chordPcs, isInScale, isNoChord } from '../core/theory'
 import { GHOST_BARS, LABEL_W, pitchLabel } from './geometry'
 
 const ROW_H = 22
@@ -211,6 +211,17 @@ export function Timeline(p: Props) {
             <div className="lane-label">Hợp âm</div>
             <div className="lane-body" style={{ width }}>
               {song.chords.map((c, bar) => {
+                if (isNoChord(c))
+                  return (
+                    <button
+                      key={bar}
+                      className={`chord chord-empty${p.selectedBar === bar ? ' is-on' : ''}`}
+                      style={{ left: bar * barW + 1, width: barW - 3 }}
+                      onClick={() => p.onSelectBar(bar)}
+                      aria-pressed={p.selectedBar === bar}
+                      aria-label={`Ô ${bar + 1}: chưa có hợp âm. Bấm để chọn.`}
+                    />
+                  )
                 const fn = chordFunction(c.degree)
                 return (
                   <button

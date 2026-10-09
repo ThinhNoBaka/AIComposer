@@ -1,4 +1,4 @@
-import type { Chord, Mode } from './theory'
+import { NO_CHORD, type Chord, type Mode } from './theory'
 import type { ChordStyle, DrumStyle, Song } from './song'
 
 export type Mood = {
@@ -142,6 +142,9 @@ export const MOODS: Mood[] = [
   },
 ]
 
+/** Chưa chọn cảm xúc: ô nhịp trống, không hợp âm, không trống. */
+export const NO_MOOD = 'none'
+
 export function getMood(id: string): Mood {
   return MOODS.find((m) => m.id === id) ?? MOODS[0]
 }
@@ -174,5 +177,27 @@ export function songFromMood(mood: Mood, bars = 8): Song {
     fx: [],
     fxVolume: 0.7,
     seed: 1,
+  }
+}
+
+/** Bài trống: chưa chọn cảm xúc, không hợp âm, không trống, nhạc cụ piano. */
+export function emptySong(bars = 8): Song {
+  const base = songFromMood(MOODS[0], bars)
+  return {
+    ...base,
+    moodId: NO_MOOD,
+    tonic: 0,
+    mode: 'major',
+    bpm: 100,
+    chords: Array.from({ length: bars }, () => ({ ...NO_CHORD })),
+    tracks: {
+      melody: { instrument: 'acoustic_grand_piano', volume: 0.9, muted: false },
+      chords: { instrument: 'acoustic_grand_piano', volume: 0.6, muted: false },
+      bass: { instrument: 'acoustic_bass', volume: 0.75, muted: false },
+      drums: { ...base.tracks.drums, muted: true },
+    },
+    chordStyle: 'block',
+    drumStyle: 'none',
+    swing: 0,
   }
 }

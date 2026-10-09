@@ -4,6 +4,7 @@ import { generateMelody } from '../core/melody'
 import { isInScale } from '../core/theory'
 import { mapDrumGroups } from '../audio/voices'
 import { applyMood, reducer, type History } from './store'
+import { validateSong } from '../core/song'
 
 function hist(): History {
   return { past: [], present: songFromMood(getMood('vui')), future: [], lastKey: null, lastAt: 0 }
@@ -81,5 +82,34 @@ describe('đổi cảm xúc cho bài đã hoàn thiện', () => {
     expect(next.bars).toBe(done.bars)
     expect(next.tonic).toBe(getMood('buon').tonic)
     for (const n of next.melody) expect(isInScale(n.pitch, next.tonic, next.mode)).toBe(true)
+  })
+})
+
+describe('bỏ chọn cảm xúc', () => {
+  it('bài mới mặc định trống: không hợp âm, không đệm, không trống', async () => {
+    const { emptySong, NO_MOOD } = await import('../core/moods')
+    const { buildEvents } = await import('../core/events')
+    const s = emptySong()
+    expect(s.moodId).toBe(NO_MOOD)
+    expect(validateSong(s)).toBeNull()
+    expect(buildEvents(s)).toHaveLength(0)
+  })
+
+  it('bấm lại cảm xúc đang chọn: ô nhịp trống, giữ giai điệu; chọn lại thì có hợp âm', async () => {
+    const { NO_MOOD } = await import('../core/moods')
+    const { buildEvents } = await import('../core/events')
+    const { generateMelody } = await import('../core/melody')
+    const { chordOptions } = await import('../core/suggest')
+    const base = applyMood(songFromMood(getMood('vui')), 'vui')
+    const withMel = { ...base, melody: generateMelody(base, { seed: 3 }) }
+    const off = applyMood(withMel, NO_MOOD)
+    expect(off.chords.every((c) => c.degree === -1)).toBe(true)
+    expect(off.melody).toEqual(withMel.melody)
+    expect(buildEvents(off).every((e) => e.track === 'melody')).toBe(true)
+    // Vẫn tạo được giai điệu và chọn hợp âm cho ô trống.
+    expect(generateMelody(off, { seed: 5 }).length).toBeGreaterThan(4)
+    expect(chordOptions(off, 0)).toHaveLength(7)
+    const on = applyMood(off, 'buon')
+    expect(on.chords.every((c) => c.degree >= 0)).toBe(true)
   })
 })

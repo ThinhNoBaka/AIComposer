@@ -2,10 +2,10 @@
 // rồi "hoàn thiện" thành bài có dạo đầu, đoạn chính, điệp khúc và kết.
 
 import { varyMelody } from './melody'
-import { getMood, progressionToChords } from './moods'
+import { NO_MOOD, getMood, progressionToChords } from './moods'
 import { MAX_BARS, STEPS_PER_BAR, newId, type Note, type Section, type Song } from './song'
 import { harmonize } from './suggest'
-import { isInScale, snapToScale, type Chord, type Mode } from './theory'
+import { NO_CHORD, isInScale, snapToScale, type Chord, type Mode } from './theory'
 
 export { MAX_BARS }
 
@@ -30,6 +30,12 @@ export type HummedMelody = {
 export type ApplyOptions = { useKey: boolean; useBpm: boolean; autoHarmony: boolean }
 
 const roundUp4 = (bars: number) => Math.max(4, Math.ceil(bars / 4) * 4)
+
+/** Hợp âm mặc định trước khi tự hoà âm: vòng của cảm xúc, hoặc ô trống nếu chưa chọn cảm xúc. */
+function baseChords(song: Song, bars: number, sevenths: boolean): Chord[] {
+  if (song.moodId === NO_MOOD) return Array.from({ length: bars }, () => ({ ...NO_CHORD }))
+  return progressionToChords(getMood(song.moodId).progressions[0], bars, sevenths)
+}
 
 export function melodyEndBar(song: Song): number {
   const end = song.melody.length ? Math.max(...song.melody.map((n) => n.start + n.dur)) : 0
@@ -77,7 +83,7 @@ export function applyHumming(song: Song, hum: HummedMelody, opts: ApplyOptions):
     mode,
     bpm,
     bars,
-    chords: progressionToChords(mood.progressions[0], bars, sevenths),
+    chords: baseChords(song, bars, sevenths),
     melody: notes,
     fx: song.fx.filter((f) => f.start < bars * STEPS_PER_BAR),
     sections: undefined,
@@ -113,7 +119,7 @@ export function appendHumming(song: Song, hum: HummedMelody, opts: { autoHarmony
   const shift = fitShift(hum, song.tonic, song.mode)
   const { notes, dropped } = placeNotes(hum, fromBar, bars, (p) => snapToScale(p + shift, song.tonic, song.mode))
   const sevenths = song.chords[0]?.seventh ?? mood.sevenths
-  const fresh = progressionToChords(mood.progressions[0], bars, sevenths)
+  const fresh = baseChords(song, bars, sevenths)
   const oldChords = song.chords.slice(0, fromBar)
   let next: Song = {
     ...song,
