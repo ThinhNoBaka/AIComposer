@@ -83,6 +83,37 @@ def onset_labels(ref: list[tuple[float, float, float]], n: int, width: int) -> n
     return lab
 
 
+def _match_rate(ref_arr: np.ndarray, t: np.ndarray, m: np.ndarray, offset: float, scale: float) -> float:
+    """Tỉ lệ khung có giọng mà cao độ pYIN khớp (±0,6 nửa cung) nốt nhãn sau khi dời nhãn: t_nhãn * scale + offset."""
+    starts, ends, ps = ref_arr[:, 0], ref_arr[:, 1], ref_arr[:, 2]
+    rt = (t - offset) / scale
+    i = np.clip(np.searchsorted(starts, rt, side="right") - 1, 0, None)
+    hit = (rt >= starts[i]) & (rt < ends[i]) & (np.abs(ps[i] - m) < 0.6)
+    return float(hit.mean())
+
+
+def align_reference(ref: list[tuple[float, float, float]], track: PitchTrack) -> tuple[list[tuple[float, float, float]], float]:
+    """Căn giờ nhãn MIDI theo tiếng ngân.
+
+    MIDI của HumTrans luôn bắt đầu ở giây 0 còn người ngân vào trễ (thường ~0,2 s), nên onset nhãn lệch hẳn khỏi ±50 ms.
+    Dò độ dời (−0,5…1,5 s) rồi tinh chỉnh thêm hệ số co giãn (0,97…1,03) sao cho nhiều khung pYIN khớp cao độ nốt nhãn nhất
+    (đã bù lệch quãng tám). Trả về (nhãn đã dời, tỉ lệ khớp); tỉ lệ thấp nghĩa là nhãn không đáng tin.
+    """
+    v = ~np.isnan(track.midi)
+    if v.sum() < 20 or not ref:
+        return ref, 0.0
+    t, m = track.times[v], track.midi[v]
+    arr = np.array(sorted(ref), dtype=float)
+    m = m + round((np.median(arr[:, 2]) - np.median(m)) / 12) * 12
+    best = max((_match_rate(arr, t, m, off, 1.0), off, 1.0) for off in np.arange(-0.5, 1.5, 0.01))
+    _, off0, _ = best
+    for sc in np.arange(0.97, 1.0301, 0.005):
+        for off in np.arange(off0 - 0.06, off0 + 0.0601, 0.01):
+            best = max(best, (_match_rate(arr, t, m, off, sc), off, sc))
+    rate, off, sc = best
+    return [(a * sc + off, b * sc + off, p) for a, b, p in ref], rate
+
+
 def normalize(y: np.ndarray) -> np.ndarray:
     """Cắt 60 giây và chuẩn hoá âm lượng giống transcribe_array, để đặc trưng lúc học khớp lúc chạy."""
     from app.humming.pipeline import MAX_SECONDS
@@ -100,7 +131,16 @@ def process(name: str, y: np.ndarray, ref, context: int, width: int) -> dict:
 
 
 def _process_file(args) -> dict | None:
-    audio, midi, context, width, cache_dir = args
+    audio, midi, context, width, cache_dir, align = args
+    item = _load_file(audio, midi, context, width, cache_dir)
+    if item and align:
+        # Cache giữ nhãn gốc; căn giờ làm sau khi đọc để đổi cách căn không phải chạy lại pYIN.
+        item["ref"], item["align_rate"] = align_reference(item["ref"], item["track"])
+        item["y"] = onset_labels(item["ref"], len(item["x"]), width)
+    return item
+
+
+def _load_file(audio: str, midi: str, context: int, width: int, cache_dir: str) -> dict | None:
     key = hashlib.md5(f"{audio}|{context}|{width}".encode()).hexdigest()[:16]
     cache = Path(cache_dir) / f"{Path(audio).stem}_{key}.npz" if cache_dir else None
     if cache and cache.exists():
@@ -138,7 +178,8 @@ def load_items(args) -> list[dict]:
         pairs = [pairs[i] for i in sorted(rng.permutation(len(pairs))[: args.limit])]
     if not pairs:
         raise SystemExit(f"Không tìm thấy cặp audio + MIDI cùng tên trong {args.data}")
-    jobs = [(str(a), str(m), args.context, args.label_width, str(args.cache_dir) if args.cache_dir else "") for a, m in pairs]
+    cache = str(args.cache_dir) if args.cache_dir else ""
+    jobs = [(str(a), str(m), args.context, args.label_width, cache, not args.no_align) for a, m in pairs]
     items: list[dict] = []
     t0 = time.time()
     if args.jobs > 1:
@@ -155,23 +196,40 @@ def load_items(args) -> list[dict]:
                 items.append(it)
             if (k + 1) % 50 == 0:
                 print(f"  đã trích đặc trưng {k + 1}/{len(jobs)} file ({time.time() - t0:.0f}s)")
+    if not args.no_align:
+        rates = np.array([it["align_rate"] for it in items])
+        good = [it for it in items if it["align_rate"] >= args.min_align]
+        print(
+            f"Căn giờ nhãn: tỉ lệ khung khớp trung vị {np.median(rates):.2f}; bỏ {len(items) - len(good)} file khớp dưới "
+            f"{args.min_align:.2f} (nhãn không đáng tin)"
+        )
+        items = good
     return items
 
 
-def split_items(items: list[dict], val_frac: float, seed: int, keys_file: Path | None = None) -> tuple[list[dict], list[dict]]:
-    """Chia theo file (không chia theo khung) để tập kiểm định là bản thu mô hình chưa thấy."""
+def split_items(
+    items: list[dict], val_frac: float, seed: int, keys_file: Path | None = None
+) -> tuple[list[dict], list[dict], list[dict]]:
+    """Chia theo file (không chia theo khung) để tập kiểm định là bản thu mô hình chưa thấy.
+
+    Trả về (train, valid, test). Có file chia tập của HumTrans (khoá TRAIN/VALID/TEST, không phân biệt hoa thường) thì
+    valid dùng để chọn ngưỡng, test để chấm note F1 cuối cùng; không có thì test rỗng và valid dùng cho cả hai.
+    """
     if keys_file and keys_file.exists():
-        keys = json.loads(keys_file.read_text(encoding="utf-8"))
-        test_names = {Path(k).stem for part in ("valid", "test") for k in keys.get(part, [])}
-        if test_names:
-            tr = [it for it in items if it["name"] not in test_names]
-            va = [it for it in items if it["name"] in test_names]
-            if tr and va:
-                return tr, va
+        keys = {k.lower(): v for k, v in json.loads(keys_file.read_text(encoding="utf-8")).items()}
+        valid_names = {Path(k).stem for k in keys.get("valid", [])}
+        test_names = {Path(k).stem for k in keys.get("test", [])}
+        tr = [it for it in items if it["name"] not in valid_names | test_names]
+        va = [it for it in items if it["name"] in valid_names]
+        te = [it for it in items if it["name"] in test_names]
+        if tr and va:
+            return tr, va, te
+        if tr and te:
+            return tr, te, []
     order = np.random.default_rng(seed).permutation(len(items))
     n_val = max(1, int(round(len(items) * val_frac)))
     val = {int(i) for i in order[:n_val]}
-    return [it for i, it in enumerate(items) if i not in val], [it for i, it in enumerate(items) if i in val]
+    return [it for i, it in enumerate(items) if i not in val], [it for i, it in enumerate(items) if i in val], []
 
 
 # ---------- Mô hình (numpy) ----------
@@ -319,6 +377,8 @@ def main(argv=None) -> int:
     ap.add_argument("--data", type=Path, help="thư mục dataset (wav + mid cùng tên, tìm đệ quy)")
     ap.add_argument("--midi-dir", type=Path, default=None, help="thư mục MIDI nếu để riêng")
     ap.add_argument("--keys", type=Path, default=None, help="file JSON chia train/valid/test của HumTrans (nếu có)")
+    ap.add_argument("--no-align", action="store_true", help="không căn giờ nhãn MIDI theo tiếng ngân (xem align_reference)")
+    ap.add_argument("--min-align", type=float, default=0.5, help="bỏ file có tỉ lệ khung khớp nhãn sau căn giờ dưới mức này")
     ap.add_argument("--synthetic", type=int, default=0, help="dùng N mẫu giả lập thay cho dataset")
     ap.add_argument("--limit", type=int, default=0, help="chỉ lấy ngẫu nhiên N file")
     ap.add_argument("--jobs", type=int, default=1, help="số tiến trình trích đặc trưng")
@@ -343,8 +403,11 @@ def main(argv=None) -> int:
     items = load_items(args)
     if len(items) < 2:
         raise SystemExit("Cần ít nhất 2 file để chia train/kiểm định.")
-    train, val = split_items(items, args.val_frac, args.seed, args.keys)
-    print(f"{len(items)} file ({len(train)} train / {len(val)} kiểm định), trích đặc trưng mất {time.time() - t0:.0f}s")
+    train, val, test = split_items(items, args.val_frac, args.seed, args.keys)
+    print(
+        f"{len(items)} file ({len(train)} train / {len(val)} kiểm định / {len(test)} test), "
+        f"trích đặc trưng mất {time.time() - t0:.0f}s"
+    )
 
     x = np.concatenate([it["x"] for it in train]).astype(np.float64)
     y = np.concatenate([it["y"] for it in train]).astype(np.float64)
@@ -391,8 +454,8 @@ def main(argv=None) -> int:
     model.threshold = model_json["threshold"] = best[1]
     print(f"Ngưỡng tốt nhất {best[1]}: onset F1 (±50 ms) trên tập kiểm định = {best[0]:.3f}")
 
-    metrics = {"onset_f1": round(best[0], 4), **evaluate(model, val, args.eval_limit)}
-    print(f"Note F1 trên {metrics['files']} file kiểm định: pipeline hiện tại {metrics['note_f1_baseline']:.3f} → có mô hình {metrics['note_f1_model']:.3f}")
+    metrics = {"onset_f1": round(best[0], 4), "eval_split": "test" if test else "valid", **evaluate(model, test or val, args.eval_limit)}
+    print(f"Note F1 trên {metrics['files']} file {metrics['eval_split']}: pipeline hiện tại {metrics['note_f1_baseline']:.3f} → có mô hình {metrics['note_f1_model']:.3f}")
     if metrics["note_f1_model"] < metrics["note_f1_baseline"]:
         print("CHÚ Ý: mô hình đang làm note F1 kém hơn pipeline hiện tại. Đừng chép file này vào backend/models; thử thêm dữ liệu hoặc epoch.")
     model_json["metrics"] = metrics
@@ -400,6 +463,7 @@ def main(argv=None) -> int:
         "source": "synthetic" if args.synthetic else str(args.data.name),
         "files_train": len(train),
         "files_val": len(val),
+        "files_test": len(test),
         "date": date.today().isoformat(),
         "hidden": args.hidden,
         "args": {k: (str(v) if isinstance(v, Path) else v) for k, v in vars(args).items() if k not in {"data", "midi_dir", "cache_dir", "out", "keys"}},

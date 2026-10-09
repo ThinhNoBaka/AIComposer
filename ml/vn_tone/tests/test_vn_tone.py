@@ -300,3 +300,30 @@ def test_ctc_alignment_and_matching():
     assert [(s["syllable"], s["pitch"], s["melisma_notes"]) for s in sylls] == [("Em", 64, 2), ("ơi", 62, 1)]
     rows = vn_common.finish_rows(sylls, "bai", "x", "audio", (0, "major"))
     assert rows[1]["interval_prev"] == -2 and rows[0]["onset_beat"] == pytest.approx(2.2)
+
+
+def test_edinburgh_csv(tmp_path):
+    """CSV kiểu Kirby & Ladd: thanh lấy từ cột tone, câu cắt theo boundary, khoảng cách tính từ nốt cuối chữ trước."""
+    import extract_edinburgh
+
+    header = "note,step_on,alter_on,octave_on,step_off,alter_off,octave_off,boundary,duration,verse,syllable,tone\n"
+    body = [
+        "1,A,0,4,A,0,4,False,0.25,1,ɛm,1",  # A4 = 69, ngang
+        "2,C,0,5,D,0,5,False,0.25,1,den,5",  # C5→D5 luyến, sắc
+        "3,B,-1,4,B,-1,4,True,0.5,1,mɛ,6",  # Bb4 = 70, nặng, hết câu
+        "4,G,0,4,G,0,4,False,0.25,1,ve,2",  # câu mới, huyền
+    ]
+    src = tmp_path / "raw"
+    src.mkdir()
+    (src / "BaiThu.csv").write_text(header + "\n".join(body) + "\n", encoding="utf-8")
+    out = tmp_path / "out"
+    assert extract_edinburgh.main(["--input", str(src), "--out", str(out)]) == 0
+    rows = vn_common.read_rows(next(out.glob("syllables.*")))
+    assert [r["tone"] for r in rows] == ["ngang", "sac", "nang", "huyen"]
+    assert [r["pitch"] for r in rows] == [69, 72, 70, 67]
+    assert [r["line"] for r in rows] == [0, 0, 0, 1]
+    assert [r["interval_prev"] for r in rows][:3] == [None, 3, -4]  # 74 (D5) → 70
+    assert rows[3]["interval_prev"] is None
+    assert [r["onset_beat"] for r in rows] == [0.0, 1.0, 2.0, 4.0]
+    assert rows[1]["melisma_notes"] == 2
+    assert {r["song_id"] for r in rows} == {"baithu"}
