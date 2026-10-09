@@ -22,6 +22,11 @@ COPY backend/app ./app
 # Mô hình học máy (vd. humming_onset.json). Thư mục có thể chỉ có README: thiếu file thì app dùng cách tách nốt cũ.
 COPY backend/models ./models
 ENV HUMMING_MODEL=/app/models/humming_onset.json
+# Bộ cấp phát bộ nhớ trả RAM lại cho hệ thống sau mỗi bản ngân dài (máy chủ miễn phí chỉ 512 MB):
+# bản 15 phút xử lý hai lần liền đo được 420 MB thay vì 482 MB.
+ENV MALLOC_ARENA_MAX=2 \
+    MALLOC_TRIM_THRESHOLD_=1048576 \
+    MALLOC_MMAP_THRESHOLD_=1048576
 COPY --from=web /web/dist ./static
 # Không đặt DATABASE_URL thì dùng SQLite trong /app/data (thư mục user app ghi được). Deploy thật thì đặt DATABASE_URL tới PostgreSQL.
 ENV DATABASE_URL=sqlite:////app/data/aicomposer.db

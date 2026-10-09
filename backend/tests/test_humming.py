@@ -154,3 +154,29 @@ def test_semitone_step_sung_legato_is_split():
     y = synth_hum_natural(ref, SR, tuning_cents=30, drift_cents=0, seed=7)
     notes = segment_notes(track_pitch(y, SR))
     assert len(notes) == 4, [(round(n.onset, 2), round(n.pitch, 2)) for n in notes]
+
+
+def test_long_recording_is_processed_in_chunks_with_same_notes(monkeypatch):
+    # Bản dài xử lý theo từng đoạn (để đỡ RAM) phải ra đúng các nốt như chạy cả bản một lần.
+    from app.humming import pitch
+
+    ref = [(0.2 + 0.45 * i, 0.55 + 0.45 * i, 60 + (i * 5) % 12) for i in range(55)]  # khoảng 25 giây
+    y = synth_hum(ref, SR, seed=11).astype(np.float32)
+    calls = []
+    monkeypatch.setattr(pitch, "CHUNK_FRAMES", 400)
+    monkeypatch.setattr(pitch, "PAD_FRAMES", 50)
+    chunked = transcribe_array(y, SR, TranscribeOptions(bpm=120), progress=calls.append)
+    monkeypatch.setattr(pitch, "CHUNK_FRAMES", 10**9)
+    whole = transcribe_array(y, SR, TranscribeOptions(bpm=120))
+    assert chunked["melody"] == whole["melody"] and len(whole["melody"]) == 55
+    assert calls and calls == sorted(calls) and 0 < calls[-1] <= 1
+
+
+def test_recording_longer_than_limit_is_cut(monkeypatch):
+    from app.humming import pipeline
+
+    monkeypatch.setattr(pipeline, "MAX_SECONDS", 2)
+    y = synth_hum([(0.2, 0.8, 60), (1.0, 1.6, 64), (2.5, 3.2, 67)], SR)
+    res = transcribe_array(y, SR, TranscribeOptions(bpm=100))
+    assert res["truncated"] is True and res["duration_sec"] == 2.0
+    assert [m["pitch"] % 12 for m in res["melody"]] == [0, 4]

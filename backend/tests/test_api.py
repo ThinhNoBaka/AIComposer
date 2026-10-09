@@ -117,3 +117,41 @@ def test_revisions_are_capped(client, monkeypatch):
     for bpm in range(100, 106):
         client.put(f"/api/projects/{pid}", json={"title": "C", "song": {**SONG, "bpm": bpm}}, headers=ALICE)
     assert len(client.get(f"/api/projects/{pid}/revisions", headers=ALICE).json()) == 3
+
+
+def test_humming_job_runs_in_background_and_reports_result(client):
+    import time
+
+    beat = 60 / 100
+    ref = [(0.3 + i * beat, 0.3 + (i + 1) * beat - 0.06, p) for i, p in enumerate([60, 64, 67])]
+    wav = to_wav_bytes(synth_hum(ref, 16000, seed=2))
+    assert client.get("/api/humming/limits").json()["max_minutes"] > 1
+    r = client.post("/api/humming/jobs", files={"audio": ("hum.wav", wav, "audio/wav")}, data={"bpm": "100"}, headers=ALICE)
+    assert r.status_code == 200, r.text
+    job = r.json()
+    assert client.get(f"/api/humming/jobs/{job['job_id']}", headers=BOB).status_code == 404
+    for _ in range(300):
+        job = client.get(f"/api/humming/jobs/{job['job_id']}", headers=ALICE).json()
+        if job["status"] in ("done", "error"):
+            break
+        time.sleep(0.1)
+    assert job["status"] == "done" and job["progress"] == 1.0
+    assert [m["pitch"] % 12 for m in job["result"]["melody"]] == [0, 4, 7]
+    assert job["result"]["truncated"] is False
+
+    bad = client.post("/api/humming/jobs", files={"audio": ("x.wav", b"not audio", "audio/wav")}, headers=ALICE).json()
+    for _ in range(100):
+        bad = client.get(f"/api/humming/jobs/{bad['job_id']}", headers=ALICE).json()
+        if bad["status"] in ("done", "error"):
+            break
+        time.sleep(0.1)
+    assert bad["status"] == "error" and "giải mã" in bad["error"]
+
+
+def test_humming_upload_size_limit(client, monkeypatch):
+    from app.routes import humming
+
+    monkeypatch.setattr(humming, "HUM_MAX_UPLOAD_MB", 0.5)
+    big = b"\0" * (600 * 1024)
+    r = client.post("/api/humming/jobs", files={"audio": ("big.wav", big, "audio/wav")}, headers=ALICE)
+    assert r.status_code == 413 and "0.5 MB" in r.json()["detail"]
