@@ -1458,6 +1458,13 @@ select,
 .roll.is-locked .note {
   cursor: default;
 }
+/* Nốt đã khoá: viền nét đứt, không kéo được. */
+.note.note-locked {
+  stroke: var(--ink);
+  stroke-width: 1.5;
+  stroke-dasharray: 3 2;
+  cursor: default;
+}
 .sel-box {
   fill: var(--accent-soft);
   stroke: var(--accent-line);
@@ -1692,6 +1699,7 @@ select,
 }
 .cloud-list li {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: 6px;
   padding: 8px 10px;
@@ -1712,6 +1720,25 @@ select,
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+/* Lịch sử phiên bản mở ngay dưới bài, chiếm cả dòng. */
+.cloud-history {
+  flex-basis: 100%;
+}
+.cloud-history ul {
+  list-style: none;
+  margin: 4px 0 0;
+  padding: 0;
+  max-height: 220px;
+  overflow-y: auto;
+}
+.cloud-list .cloud-history li {
+  justify-content: space-between;
+  padding: 4px 0;
+  border: 0;
+  border-top: 1px solid var(--line);
+  border-radius: 0;
+  background: none;
 }
 
 /* ---------- Màn hình nhỏ: xếp chồng ---------- */

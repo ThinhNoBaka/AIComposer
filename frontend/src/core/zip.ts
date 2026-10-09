@@ -93,3 +93,49 @@ export function zipStore(entries: ZipEntry[], when = new Date()): Uint8Array {
   }
   return out
 }
+
+/**
+ * Đọc các file trong một .zip (để mở lại gói trọn bài). Hỗ trợ STORE (gói do app xuất) và DEFLATE (gói người dùng
+ * nén lại bằng phần mềm khác) qua DecompressionStream của trình duyệt. Đọc theo central directory nên không phụ thuộc
+ * data descriptor. File hỏng hoặc kiểu nén khác thì ném lỗi tiếng Việt.
+ */
+export async function unzip(bytes: Uint8Array, want?: (name: string) => boolean): Promise<ZipEntry[]> {
+  const dv = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength)
+  let eocd = -1
+  for (let i = bytes.length - 22; i >= Math.max(0, bytes.length - 22 - 0xffff); i--) {
+    if (dv.getUint32(i, true) === 0x06054b50) {
+      eocd = i
+      break
+    }
+  }
+  if (eocd < 0) throw new Error('File không phải .zip hợp lệ.')
+  const count = dv.getUint16(eocd + 10, true)
+  let p = dv.getUint32(eocd + 16, true)
+  const dec = new TextDecoder()
+  const out: ZipEntry[] = []
+  for (let k = 0; k < count; k++) {
+    if (p + 46 > bytes.length || dv.getUint32(p, true) !== 0x02014b50) throw new Error('Mục lục .zip bị hỏng.')
+    const method = dv.getUint16(p + 10, true)
+    const csize = dv.getUint32(p + 20, true)
+    const nameLen = dv.getUint16(p + 28, true)
+    const extraLen = dv.getUint16(p + 30, true)
+    const commentLen = dv.getUint16(p + 32, true)
+    const localAt = dv.getUint32(p + 42, true)
+    const name = dec.decode(bytes.subarray(p + 46, p + 46 + nameLen))
+    p += 46 + nameLen + extraLen + commentLen
+    if (name.endsWith('/') || (want && !want(name))) continue
+    if (dv.getUint32(localAt, true) !== 0x04034b50) throw new Error(`File "${name}" trong .zip bị hỏng.`)
+    const start = localAt + 30 + dv.getUint16(localAt + 26, true) + dv.getUint16(localAt + 28, true)
+    const raw = bytes.subarray(start, start + csize)
+    if (method === 0) out.push({ name, data: raw.slice() })
+    else if (method === 8) out.push({ name, data: await inflateRaw(raw) })
+    else throw new Error(`File "${name}" nén kiểu ${method}, chưa hỗ trợ.`)
+  }
+  return out
+}
+
+async function inflateRaw(data: Uint8Array): Promise<Uint8Array> {
+  if (typeof DecompressionStream === 'undefined') throw new Error('Trình duyệt này không giải nén được .zip nén; hãy dùng gói do app xuất.')
+  const stream = new Blob([data as BlobPart]).stream().pipeThrough(new DecompressionStream('deflate-raw'))
+  return new Uint8Array(await new Response(stream).arrayBuffer())
+}

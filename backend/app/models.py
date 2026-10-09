@@ -27,6 +27,19 @@ class Project(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now, onupdate=_now)
     recordings: Mapped[list["Recording"]] = relationship(back_populates="project", cascade="all, delete-orphan")
     vocal_takes: Mapped[list["VocalTake"]] = relationship(back_populates="project", cascade="all, delete-orphan")
+    revisions: Mapped[list["ProjectRevision"]] = relationship(back_populates="project", cascade="all, delete-orphan")
+
+
+class ProjectRevision(Base):
+    """Bản chụp bài trước mỗi lần lưu đè (lịch sử phiên bản). Giữ tối đa MAX_REVISIONS bản mới nhất mỗi bài."""
+
+    __tablename__ = "project_revisions"
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
+    project_id: Mapped[str] = mapped_column(ForeignKey("projects.id", ondelete="CASCADE"), index=True)
+    title: Mapped[str] = mapped_column(String(200))
+    song: Mapped[dict] = mapped_column(JSON)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+    project: Mapped[Project] = relationship(back_populates="revisions")
 
 
 class Recording(Base):

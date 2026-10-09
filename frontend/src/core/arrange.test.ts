@@ -27,7 +27,7 @@ import {
 import { STEM_LABEL, soloSong, stemIds } from './stems'
 import { NO_CHORD, chordFunction, isNoChord } from './theory'
 import { estimateLatencyMs, f0Path, notesToSeconds, pitchRange, takeOffsetMs, vocalStartPlan } from './vocal'
-import { crc32, zipStore } from './zip'
+import { crc32, unzip, zipStore } from './zip'
 
 function withMelody(moodId: string, seed = 7): Song {
   const s = songFromMood(getMood(moodId))
@@ -219,6 +219,39 @@ describe('stems', () => {
 })
 
 describe('zip', () => {
+  it('đọc lại gói STORE do app xuất, lọc được theo tên', async () => {
+    const enc = new TextEncoder()
+    const files = [
+      { name: 'Bài thử.aicomposer.json', data: enc.encode('{"version":1}') },
+      { name: 'stems/', data: new Uint8Array() },
+      { name: 'stems/a.wav', data: new Uint8Array([9, 8, 7]) },
+    ]
+    const all = await unzip(zipStore(files))
+    expect(all.map((f) => f.name)).toEqual(['Bài thử.aicomposer.json', 'stems/a.wav'])
+    expect([...all[1].data]).toEqual([9, 8, 7])
+    const only = await unzip(zipStore(files), (n) => n.endsWith('.aicomposer.json'))
+    expect(new TextDecoder().decode(only[0].data)).toBe('{"version":1}')
+  })
+
+  it('đọc được file nén DEFLATE (gói nén lại bằng phần mềm khác)', async () => {
+    const text = 'giai điệu '.repeat(200)
+    const packed = new Uint8Array(
+      await new Response(new Blob([new TextEncoder().encode(text)]).stream().pipeThrough(new CompressionStream('deflate-raw'))).arrayBuffer(),
+    )
+    const zip = zipStore([{ name: 'bai.aicomposer.json', data: packed }])
+    const dv = new DataView(zip.buffer)
+    const eocd = zip.length - 22
+    const cd = dv.getUint32(eocd + 16, true)
+    dv.setUint16(8, 8, true) // header của file: kiểu nén DEFLATE
+    dv.setUint16(cd + 10, 8, true) // mục lục: kiểu nén DEFLATE
+    const [f] = await unzip(zip)
+    expect(new TextDecoder().decode(f.data)).toBe(text)
+  })
+
+  it('file không phải zip thì báo lỗi rõ ràng', async () => {
+    await expect(unzip(new TextEncoder().encode('không phải zip'))).rejects.toThrow('.zip')
+  })
+
   it('CRC32 chuẩn', () => {
     expect(crc32(new TextEncoder().encode('123456789'))).toBe(0xcbf43926)
     expect(crc32(new Uint8Array())).toBe(0)

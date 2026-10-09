@@ -141,7 +141,9 @@ export function Timeline(p: Props) {
 
   const removeNotes = (n: Note) => {
     if (p.melodyLocked) return
-    const ids = sel.has(n.id) ? sel : new Set([n.id])
+    // Nốt đã khoá không xoá được; nhóm đang chọn thì chỉ xoá các nốt chưa khoá.
+    const ids = new Set([...(sel.has(n.id) ? sel : [n.id])].filter((id) => !song.melody.find((x) => x.id === id)?.locked))
+    if (!ids.size) return
     p.onMelody(deleteNotes(song.melody, ids))
     p.onSelect([])
   }
@@ -156,7 +158,7 @@ export function Timeline(p: Props) {
     }
     if (!sel.has(n.id)) p.onSelect([n.id])
     p.onPreview(n.pitch)
-    if (p.melodyLocked) return
+    if (p.melodyLocked || n.locked) return
     const rect = (e.target as SVGRectElement).getBoundingClientRect()
     svgRef.current?.setPointerCapture(e.pointerId)
     if (e.clientX > rect.right - 6) setDrag({ kind: 'resize', id: n.id })
@@ -179,7 +181,7 @@ export function Timeline(p: Props) {
       if (end - n.start !== n.dur) p.onMelody(song.melody.map((x) => (x.id === n.id ? { ...x, dur: end - n.start } : x)), `drag:${n.id}`)
     } else {
       // Dời cả nhóm theo nốt đang kéo. Khoá thang âm thì dời theo hàng (bậc trong thang) cho nốt không lạc thang.
-      const ids = sel.has(n.id) ? sel : new Set([n.id])
+      const ids = new Set([...(sel.has(n.id) ? sel : [n.id])].filter((id) => !song.melody.find((x) => x.id === id)?.locked))
       const dStep = snap(step - drag.offsetStep) - n.start
       const dRow = rowOf(pitch) - rowOf(n.pitch)
       if (dStep === 0 && dRow === 0) return
@@ -376,7 +378,7 @@ export function Timeline(p: Props) {
                 const syl = p.syllables?.get(n.id)
                 const cls = `note${isInScale(n.pitch, song.tonic, song.mode) ? '' : ' note-out'}${p.hintIds.has(n.id) ? ' note-hint' : ''}${
                   drag?.kind === 'move' && (drag.id === n.id || sel.has(n.id)) ? ' note-drag' : ''
-                }${sel.has(n.id) ? ' is-sel' : ''}`
+                }${sel.has(n.id) ? ' is-sel' : ''}${n.locked ? ' note-locked' : ''}`
                 return (
                   <g key={n.id}>
                     <rect
@@ -393,7 +395,9 @@ export function Timeline(p: Props) {
                         removeNotes(n)
                       }}
                     >
-                      <title>{`${pitchLabel(n.pitch)}${syl && syl !== '–' ? `, chữ “${syl}”` : ''}. Kéo để di chuyển, kéo mép phải để đổi độ dài, chuột phải để xoá`}</title>
+                      <title>{`${pitchLabel(n.pitch)}${syl && syl !== '–' ? `, chữ “${syl}”` : ''}${
+                        n.locked ? '. Nốt đã khoá: máy không viết đè, bỏ khoá để sửa' : '. Kéo để di chuyển, kéo mép phải để đổi độ dài, chuột phải để xoá'
+                      }`}</title>
                     </rect>
                     {syl && (
                       <text x={x + 4} y={w >= 22 ? y + ROW_H - 9 : y - 3} className={`syl${w >= 22 ? '' : ' syl-out'}`}>
