@@ -8,3 +8,6 @@ __pycache__/
 .env
 data/
 reports/*.csv
+
+# Dữ liệu tải về và dữ liệu trung gian của các script ML
+ml/**/data/
