@@ -1,0 +1,28 @@
+# Chạy đầy đủ trên máy: app + PostgreSQL.  docker compose up --build  rồi mở http://localhost:8000
+services:
+  db:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_USER: aicomposer
+      POSTGRES_PASSWORD: aicomposer
+      POSTGRES_DB: aicomposer
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U aicomposer"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+
+  app:
+    build: .
+    environment:
+      DATABASE_URL: postgresql://aicomposer:aicomposer@db:5432/aicomposer
+    ports:
+      - "8000:8000"
+    depends_on:
+      db:
+        condition: service_healthy
+
+volumes:
+  pgdata:

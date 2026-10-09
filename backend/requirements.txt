@@ -1,0 +1,13 @@
+fastapi==0.143.0
+uvicorn[standard]==0.54.0
+python-multipart==0.0.32
+pydantic==2.14.0
+SQLAlchemy==2.1.4
+psycopg[binary]==3.3.6
+numpy==2.5.3
+scipy==1.18.1
+numba==0.68.0
+librosa==1.0.0
+soundfile==0.14.0
+mir_eval==0.8.2
+imageio-ffmpeg==0.6.0

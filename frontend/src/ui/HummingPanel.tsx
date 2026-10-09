@@ -1,0 +1,278 @@
+import { useEffect, useRef, useState } from 'react'
+import { ApiError, api, type HummingResult } from '../api/client'
+import { MicRecorder, micErrorMessage, recorderSupported, scheduleCountIn } from '../audio/recorder'
+import type { ApplyOptions } from '../core/humming'
+import type { Song } from '../core/song'
+import { NOTE_NAMES } from '../core/theory'
+
+const MAX_SECONDS = 60
+
+type Phase = 'idle' | 'opening' | 'countin' | 'recording' | 'working'
+type Take = { blob: Blob; filename: string; url: string; fixedBpm: boolean }
+
+type Props = {
+  song: Song
+  serverOk: boolean | null
+  projectId?: string
+  onApply: (result: HummingResult, opts: ApplyOptions) => void
+}
+
+const MODE_VI: Record<string, string> = { major: 'trưởng', minor: 'thứ' }
+
+function serverMessage(e: unknown): string {
+  if (e instanceof ApiError && e.status === 0)
+    return 'Chưa kết nối được máy chủ nhận nốt. Nếu đang chạy trên máy, hãy bật backend (xem README).'
+  return e instanceof Error ? e.message : String(e)
+}
+
+/** Vẽ nốt thô máy nghe được (trước khi làm tròn nhịp), để người dùng thấy máy “nghe” ra sao. */
+function RawNotes({ result }: { result: HummingResult }) {
+  const notes = result.raw_notes
+  if (!notes.length) return null
+  const t1 = Math.max(...notes.map((n) => n.offset))
+  const lo = Math.floor(Math.min(...notes.map((n) => n.pitch))) - 2
+  const hi = Math.ceil(Math.max(...notes.map((n) => n.pitch))) + 2
+  const W = 600
+  const H = 90
+  const x = (t: number) => (t / t1) * W
+  const y = (p: number) => H - ((p - lo) / (hi - lo)) * H
+  return (
+    <svg className="hum-raw" viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="none" role="img" aria-label="Các nốt thô máy nhận được">
+      {notes.map((n, i) => (
+        <rect key={i} x={x(n.onset)} y={y(n.pitch) - 3} width={Math.max(2, x(n.offset) - x(n.onset))} height={6} rx={2} />
+      ))}
+    </svg>
+  )
+}
+
+export function HummingPanel({ song, serverOk, projectId, onApply }: Props) {
+  const [phase, setPhase] = useState<Phase>('idle')
+  const [countIn, setCountIn] = useState(true)
+  const [beat, setBeat] = useState(0)
+  const [seconds, setSeconds] = useState(0)
+  const [level, setLevel] = useState(0)
+  const [take, setTake] = useState<Take | null>(null)
+  const [result, setResult] = useState<HummingResult | null>(null)
+  const [error, setError] = useState<string | null>(null)
+  const [useKey, setUseKey] = useState(true)
+  const [useBpm, setUseBpm] = useState(true)
+  const [autoHarmony, setAutoHarmony] = useState(true)
+
+  const ctxRef = useRef<AudioContext | null>(null)
+  const recRef = useRef<MicRecorder | null>(null)
+  const timers = useRef<number[]>([])
+  const fileRef = useRef<HTMLInputElement>(null)
+  const songRef = useRef(song)
+  songRef.current = song
+
+  const clearTimers = () => {
+    timers.current.forEach((t) => clearTimeout(t))
+    timers.current = []
+  }
+
+  useEffect(
+    () => () => {
+      clearTimers()
+      recRef.current?.close()
+      void ctxRef.current?.close()
+    },
+    [],
+  )
+  useEffect(() => () => (take ? URL.revokeObjectURL(take.url) : undefined), [take])
+
+  // Đồng hồ và mức âm khi đang thu.
+  useEffect(() => {
+    if (phase !== 'recording') return
+    const started = performance.now()
+    let raf = 0
+    const loop = () => {
+      const s = (performance.now() - started) / 1000
+      setSeconds(s)
+      setLevel(recRef.current?.level() ?? 0)
+      if (s >= MAX_SECONDS) void stopRecording()
+      else raf = requestAnimationFrame(loop)
+    }
+    raf = requestAnimationFrame(loop)
+    return () => cancelAnimationFrame(raf)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [phase])
+
+  const transcribe = async (t: Take) => {
+    setPhase('working')
+    setError(null)
+    setResult(null)
+    try {
+      const r = await api.transcribe(t.blob, t.filename, { bpm: t.fixedBpm ? songRef.current.bpm : undefined, projectId })
+      if (!r.melody.length) setError('Không nhận ra nốt nào. Hãy ngân to, rõ, mỗi nốt một tiếng “đa” hoặc “la”, để micro gần hơn.')
+      setResult(r)
+    } catch (e) {
+      setError(serverMessage(e))
+    } finally {
+      setPhase('idle')
+    }
+  }
+
+  const startRecording = async () => {
+    setError(null)
+    if (!recorderSupported()) {
+      setError(window.isSecureContext ? 'Trình duyệt này không hỗ trợ thu âm. Bạn có thể tải file ghi âm lên.' : 'Thu âm cần trang chạy HTTPS (hoặc localhost).')
+      return
+    }
+    setPhase('opening')
+    try {
+      ctxRef.current ??= new AudioContext()
+      const ctx = ctxRef.current
+      await ctx.resume()
+      const rec = new MicRecorder(ctx)
+      await rec.open()
+      recRef.current = rec
+      if (countIn) {
+        setPhase('countin')
+        const bpm = songRef.current.bpm
+        const end = scheduleCountIn(ctx, bpm)
+        const startDelay = (end - ctx.currentTime) * 1000
+        for (let i = 0; i < 4; i++) timers.current.push(window.setTimeout(() => setBeat(i + 1), startDelay - (4 - i) * (60000 / bpm)))
+        timers.current.push(
+          window.setTimeout(() => {
+            rec.start()
+            setBeat(0)
+            setPhase('recording')
+          }, startDelay),
+        )
+      } else {
+        rec.start()
+        setPhase('recording')
+      }
+    } catch (e) {
+      recRef.current?.close()
+      recRef.current = null
+      setError(micErrorMessage(e))
+      setPhase('idle')
+    }
+  }
+
+  const stopRecording = async () => {
+    clearTimers()
+    const rec = recRef.current
+    if (!rec) return
+    if (phase === 'countin') {
+      rec.close()
+      recRef.current = null
+      setPhase('idle')
+      return
+    }
+    try {
+      const { blob, filename } = await rec.stop()
+      const t = { blob, filename, url: URL.createObjectURL(blob), fixedBpm: countIn }
+      setTake(t)
+      if (blob.size < 2000) {
+        setError('Bản thu quá ngắn. Hãy ngân ít nhất vài giây.')
+        setPhase('idle')
+      } else await transcribe(t)
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e))
+      setPhase('idle')
+    } finally {
+      rec.close()
+      recRef.current = null
+      setLevel(0)
+    }
+  }
+
+  const uploadFile = async (f: File) => {
+    const t = { blob: f, filename: f.name, url: URL.createObjectURL(f), fixedBpm: false }
+    setTake(t)
+    await transcribe(t)
+  }
+
+  const recording = phase === 'recording' || phase === 'countin' || phase === 'opening'
+  const working = phase === 'working'
+  const offline = serverOk === false
+  const keyLabel = result ? `${NOTE_NAMES[result.tonic]} ${MODE_VI[result.mode] ?? result.mode}` : ''
+  const sameBpm = result ? Math.round(result.bpm) === song.bpm : false
+  const sameKey = result ? result.tonic === song.tonic && result.mode === song.mode : false
+
+  return (
+    <div className="hum">
+      {offline && <p className="hum-warn">Chưa kết nối máy chủ nhận nốt nên chưa thu được. Các phần khác của app vẫn dùng bình thường.</p>}
+      <div className="actions">
+        {!recording ? (
+          <button className="primary hum-rec" onClick={() => void startRecording()} disabled={working || offline}>
+            🎙 Bắt đầu ngân
+          </button>
+        ) : (
+          <button className="hum-rec stop" onClick={() => void stopRecording()} disabled={phase === 'opening'}>
+            ■ {phase === 'countin' ? 'Huỷ' : 'Xong'}
+          </button>
+        )}
+        <button onClick={() => fileRef.current?.click()} disabled={recording || working || offline}>
+          Tải file ghi âm
+        </button>
+        <input
+          ref={fileRef}
+          type="file"
+          accept="audio/*,.wav,.mp3,.m4a,.webm,.ogg"
+          hidden
+          onChange={(e) => {
+            const f = e.target.files?.[0]
+            e.target.value = ''
+            if (f) void uploadFile(f)
+          }}
+        />
+        <label className="check">
+          <input type="checkbox" checked={countIn} onChange={(e) => setCountIn(e.target.checked)} disabled={recording} />
+          Đếm 4 nhịp trước khi thu ({song.bpm} BPM)
+        </label>
+      </div>
+
+      {phase === 'countin' && (
+        <div className="hum-live" aria-live="polite">
+          <span className="hum-count">{beat || '…'}</span> Chuẩn bị, bắt đầu ngân sau tiếng gõ thứ 4
+        </div>
+      )}
+      {phase === 'recording' && (
+        <div className="hum-live" aria-live="polite">
+          <span className="hum-dot" aria-hidden /> Đang thu {Math.floor(seconds)}s / {MAX_SECONDS}s
+          <span className="hum-meter" aria-label="Mức âm micro">
+            <span style={{ width: `${Math.round(level * 100)}%` }} />
+          </span>
+          {seconds > 2 && level < 0.03 && <span className="muted-text">Micro chưa nghe thấy gì, hãy ngân to hơn.</span>}
+        </div>
+      )}
+      {working && <div className="hum-live">Đang nghe và nhận nốt…</div>}
+      {error && <p className="hum-error">{error}</p>}
+
+      {take && !recording && <audio className="hum-audio" controls src={take.url} />}
+
+      {result && result.melody.length > 0 && (
+        <div className="hum-result">
+          <p className="hum-summary">
+            Nhận được <b>{result.melody.length} nốt</b> trong {result.duration_sec.toFixed(1)} giây, giọng <b>{keyLabel}</b>
+            {result.key_confidence < 0.5 && ' (chưa chắc chắn)'}, khoảng <b>{Math.round(result.bpm)} BPM</b>, dài {result.bars} ô nhịp. Xử lý mất{' '}
+            {(result.elapsed_ms / 1000).toFixed(1)} giây.
+          </p>
+          <RawNotes result={result} />
+          <div className="hum-opts">
+            <label className="check">
+              <input type="checkbox" checked={useKey || sameKey} disabled={sameKey} onChange={(e) => setUseKey(e.target.checked)} />
+              {sameKey ? `Giọng khớp với bài (${keyLabel})` : `Đổi bài sang giọng ${keyLabel} (bỏ chọn để giữ giọng ${NOTE_NAMES[song.tonic]} hiện tại)`}
+            </label>
+            <label className="check">
+              <input type="checkbox" checked={useBpm && !sameBpm} disabled={sameBpm} onChange={(e) => setUseBpm(e.target.checked)} />
+              {sameBpm ? `Tempo khớp với bài (${song.bpm} BPM)` : `Đổi tempo thành ${Math.round(result.bpm)} BPM (đang là ${song.bpm})`}
+            </label>
+            <label className="check">
+              <input type="checkbox" checked={autoHarmony} onChange={(e) => setAutoHarmony(e.target.checked)} />
+              Tự chọn hợp âm hợp với giai điệu
+            </label>
+          </div>
+          <div className="actions">
+            <button className="primary" onClick={() => onApply(result, { useKey, useBpm: useBpm && !sameBpm, autoHarmony })}>
+              ✨ Dùng làm giai điệu và phối thành bài
+            </button>
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
