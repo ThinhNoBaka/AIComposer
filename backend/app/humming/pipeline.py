@@ -11,6 +11,7 @@ from .keys import detect_key, snap_to_scale
 from .notes import NoteEvent, SegmentParams, segment_notes
 from .pitch import track_pitch
 from .quantize import STEPS_PER_BAR, estimate_bpm, octave_shift, quantize
+from .onset_model import apply_onset_model
 from .tuning import retune
 
 MAX_SECONDS = 60
@@ -37,7 +38,8 @@ def transcribe_array(y: np.ndarray, sr: int, opts: TranscribeOptions | None = No
     if peak > 0.01:
         track = track_pitch(y, sr)
         # Bù lệch chuẩn của người ngân trước khi dò giọng và làm tròn nốt.
-        raw, tuning_cents = retune(segment_notes(track, params), track)
+        # Có model dò onset (backend/models/humming_onset.json) thì tách/gộp nốt theo model, không có thì giữ nguyên.
+        raw, tuning_cents = retune(apply_onset_model(segment_notes(track, params), track, y), track)
 
     weights = [n.offset - n.onset for n in raw]
     if o.tonic is not None and o.mode:
