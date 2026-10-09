@@ -12,6 +12,10 @@ services:
         fromDatabase:
           name: aicomposer-db
           property: connectionString
+      # Viết lời và hiểu lệnh bằng AI. sync: false: điền giá trị ở tab Environment trên Render, không để trong repo.
+      # Để trống thì app vẫn chạy, chỉ ẩn phần AI.
+      - key: ANTHROPIC_API_KEY
+        sync: false
 
 databases:
   - name: aicomposer-db

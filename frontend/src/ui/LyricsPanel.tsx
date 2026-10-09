@@ -15,6 +15,10 @@ type Props = {
   onDownload: () => void
   locks: Locks
   onLock: (key: 'lyrics' | 'align', on: boolean) => void
+  /** null: đang dò máy chủ; false: máy chủ chưa bật AI. */
+  aiAvailable: boolean | null
+  aiBusy: boolean
+  onAiWrite: (topic: string, mode: 'new' | 'continue') => void
 }
 
 const EXAMPLE = `[Đoạn 1]
@@ -24,9 +28,10 @@ Em đi qua con đường xưa
 Nhớ em nhiều lắm em ơi
 Mưa ơi đừng rơi nữa`
 
-export function LyricsPanel({ text, lines, alignment, hasMelody, onText, onMelodyFromLyrics, onSplitNotes, onFixHint, onSeekLine, onDownload, locks, onLock }: Props) {
+export function LyricsPanel({ text, lines, alignment, hasMelody, onText, onMelodyFromLyrics, onSplitNotes, onFixHint, onSeekLine, onDownload, locks, onLock, aiAvailable, aiBusy, onAiWrite }: Props) {
   const areaRef = useRef<HTMLTextAreaElement>(null)
   const [rhymeWord, setRhymeWord] = useState('')
+  const [topic, setTopic] = useState('')
   const scheme = useMemo(() => rhymeScheme(lines), [lines])
   // Mặc định tìm vần cho chữ cuối của câu áp chót (câu đang viết thường cần vần với câu trước nó).
   const autoWord = scheme.at(-2)?.word ?? scheme.at(-1)?.word ?? ''
@@ -95,6 +100,47 @@ export function LyricsPanel({ text, lines, alignment, hasMelody, onText, onMelod
           Tải lời
         </button>
       </div>
+
+      <h3 className="side-h">Viết lời bằng AI</h3>
+      {aiAvailable === false ? (
+        <p className="hint">Máy chủ chưa bật AI. Chủ web thêm biến ANTHROPIC_API_KEY trong phần Environment của Render là dùng được.</p>
+      ) : (
+        <>
+          <input
+            className="input"
+            value={topic}
+            onChange={(e) => setTopic(e.target.value)}
+            placeholder="Bài nói về gì? Ví dụ: chiều mưa nhớ người yêu cũ"
+            aria-label="Chủ đề lời bài hát"
+            maxLength={300}
+          />
+          <div className="row wrap">
+            <button
+              className="btn"
+              onClick={() => onAiWrite(topic, 'new')}
+              disabled={!aiAvailable || aiBusy || !!locks.lyrics}
+              title={
+                hasMelody
+                  ? 'AI viết lời mới, mỗi câu nhạc một câu lời, đúng số chữ bằng số nốt, chọn thanh điệu hợp hướng giai điệu. Thay lời đang có (Hoàn tác được)'
+                  : 'Chưa có giai điệu: AI viết 4 câu lục bát, rồi bấm Viết giai điệu theo lời'
+              }
+            >
+              {aiBusy ? 'AI đang viết...' : hasMelody ? 'Viết lời theo giai điệu' : 'Viết 4 câu lời'}
+            </button>
+            {lines.length > 0 && alignment.freePhrases > 0 && (
+              <button
+                className="btn"
+                onClick={() => onAiWrite(topic, 'continue')}
+                disabled={!aiAvailable || aiBusy || !!locks.lyrics}
+                title="AI viết tiếp lời cho các câu nhạc chưa có lời, nối liền ý với lời đang có"
+              >
+                Viết tiếp {alignment.freePhrases} câu còn trống
+              </button>
+            )}
+          </div>
+          <p className="hint">AI tự viết lời mới, không chép lời bài hát có sẵn.</p>
+        </>
+      )}
 
       {lines.length > 0 && (
         <>

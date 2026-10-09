@@ -46,3 +46,20 @@ group('lệnh tiếng Việt', () => {
     expect(describe({ kind: 'tempo', delta: -10 })).toBe('chậm hơn 10 BPM')
   })
 })
+
+// Mẫu lệnh mà AI ở máy chủ được phép trả về: phải được bộ hiểu lệnh này hiểu trọn, không sót chữ nào.
+// Đọc qua import.meta.glob để build trong Docker (chỉ có thư mục frontend) không cần file này.
+const aiFiles = import.meta.glob<{ groups: { examples: string[] }[] }>('../../../backend/app/ai_commands.json', { eager: true, import: 'default' })
+
+group('mẫu lệnh cho AI', () => {
+  it('mọi mẫu đều hiểu được', () => {
+    const aiCommands = Object.values(aiFiles)[0]
+    expect(aiCommands, 'thiếu backend/app/ai_commands.json').toBeDefined()
+    for (const g of aiCommands.groups)
+      for (const e of g.examples) {
+        const r = parseCommand(e)
+        expect(r.unknown, e).toEqual([])
+        expect(r.commands.length, e).toBeGreaterThan(0)
+      }
+  })
+})

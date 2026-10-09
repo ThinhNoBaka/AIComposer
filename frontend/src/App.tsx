@@ -30,6 +30,7 @@ import {
   songSeconds,
   type ApplyOptions,
 } from './core/humming'
+import { lyricsBefore, lyricsSpec, mergeLyrics } from './core/aiLyrics'
 import { alignLyrics, fixToneHint, lyricsFile, melodyFromLyrics, parseLyrics, splitNotesForLyrics, type ToneHint } from './core/lyrics'
 import { harmonize } from './core/suggest'
 import { chordPitches, degreeToMidi, isNoChord, midiToDegree, snapToScale, NOTE_NAMES, type Chord } from './core/theory'
@@ -146,6 +147,8 @@ export default function App() {
   const [message, setMessage] = useState<string | null>(null)
   const [customFx, setCustomFx] = useState<FxDef[]>([])
   const [serverOk, setServerOk] = useState<boolean | null>(null)
+  const [aiOk, setAiOk] = useState<boolean | null>(null)
+  const [aiBusy, setAiBusy] = useState(false)
   const [cloudId, setCloudIdState] = useState<string | null>(readCloudId)
   const [cloudOpen, setCloudOpen] = useState(false)
   const [saving, setSaving] = useState(false)
@@ -247,8 +250,15 @@ export default function App() {
   useEffect(() => {
     api
       .health()
-      .then((h) => setServerOk(h.ok))
-      .catch(() => setServerOk(false))
+      .then((h) => {
+        setServerOk(h.ok)
+        return api.aiStatus()
+      })
+      .then((a) => setAiOk(a.available))
+      .catch(() => {
+        setServerOk((ok) => ok ?? false)
+        setAiOk(false)
+      })
   }, [])
 
   const setCloudId = (id: string | null) => {
@@ -779,24 +789,79 @@ export default function App() {
         return null
     }
   }
-  const submitCommand = () => {
-    const text = command.trim()
-    if (!text) return
-    const { commands, unknown } = parseCommand(text)
+  // Lệnh chạy sau khi chờ AI phải dùng bản runCommand mới nhất (bài có thể đã đổi trong lúc chờ).
+  const runCommandRef = useRef(runCommand)
+  runCommandRef.current = runCommand
+  const runAll = (commands: Command[]) => {
     const done: string[] = []
     const failed: string[] = []
     for (const c of commands) {
-      const err = runCommand(c)
+      const err = runCommandRef.current(c)
       if (err) failed.push(`${describeCommand(c)}: ${err}`)
       else done.push(describeCommand(c))
     }
     const parts = []
     if (done.length) parts.push(`Đã làm: ${done.join(', ')}.`)
     if (failed.length) parts.push(`Chưa làm được: ${failed.join('; ')}.`)
-    if (unknown.length)
-      parts.push(`Chưa hiểu “${unknown.join('”, “')}”. Thử: nhanh hơn, tempo 90, đổi sang buồn, giọng La thứ, thêm điệp khúc, bỏ trống, dùng sáo trúc, tắt trống.`)
-    setCommandEcho(parts.join(' '))
-    if (!unknown.length) setCommand('')
+    return parts
+  }
+  const HELP = 'Thử: nhanh hơn, tempo 90, đổi sang buồn, giọng La thứ, thêm điệp khúc, bỏ trống, dùng sáo trúc, tắt trống.'
+  const submitCommand = async () => {
+    const text = command.trim()
+    if (!text || aiBusy) return
+    const { commands, unknown } = parseCommand(text)
+    const parts = runAll(commands)
+    if (!unknown.length) {
+      setCommandEcho(parts.join(' '))
+      setCommand('')
+      return
+    }
+    if (!aiOk) {
+      setCommandEcho([...parts, `Chưa hiểu “${unknown.join('”, “')}”. ${HELP}`].join(' '))
+      return
+    }
+    // Phần bộ luật chưa hiểu thì nhờ AI dịch sang các câu lệnh mẫu, rồi vẫn chạy qua bộ luật (khoá, giới hạn giữ nguyên).
+    setCommandEcho([...parts, 'Đang hỏi AI phần còn lại...'].join(' '))
+    setAiBusy(true)
+    try {
+      const s = song
+      const context = `tempo ${s.bpm}, giọng ${NOTE_NAMES[s.tonic]}${s.mode === 'minor' ? 'm' : ''}, cảm xúc ${s.moodId === NO_MOOD ? 'chưa chọn' : getMood(s.moodId).label}, ${s.bars} ô, ${s.melody.length} nốt giai điệu`
+      const r = await api.aiCommand(unknown.join(', '), context)
+      const more = r.commands.flatMap((c) => parseCommand(c).commands)
+      const aiParts = runAll(more)
+      setCommandEcho([...parts, ...aiParts, more.length ? '' : r.reply || `Chưa hiểu “${unknown.join('”, “')}”. ${HELP}`].filter(Boolean).join(' '))
+      if (more.length) setCommand('')
+    } catch (e) {
+      setCommandEcho([...parts, `Chưa hiểu “${unknown.join('”, “')}” (AI lỗi: ${e instanceof Error ? e.message : String(e)}). ${HELP}`].join(' '))
+    } finally {
+      setAiBusy(false)
+    }
+  }
+
+  // ----- AI -----
+  const writeLyricsAi = async (topic: string, mode: 'new' | 'continue') => {
+    const spec = lyricsSpec(song.melody, mode === 'continue' ? lines.length : 0)
+    if (!spec.line_syllables.length) return
+    setAiBusy(true)
+    try {
+      const mood = song.moodId === NO_MOOD ? undefined : getMood(song.moodId).label
+      const r = await api.aiLyrics({ topic, mood, ...spec, before: mode === 'continue' ? lyricsBefore(lines) : undefined })
+      if (!r.lines.length) {
+        setMessage('AI chưa viết được câu nào. Thử lại hoặc đổi chủ đề.')
+        return
+      }
+      update((x) => ({ ...x, lyrics: mergeLyrics(x.lyrics ?? '', r.lines.map((l) => l.text), mode) }))
+      const off = r.lines.filter((l) => l.syllables !== l.wanted).length
+      setMessage(
+        `AI đã viết ${r.lines.length} câu${r.title ? ` (gợi ý tên bài: ${r.title})` : ''}.` +
+          (off ? ` ${off} câu lệch số chữ so với số nốt, xem chỗ báo thiếu/thừa nốt bên dưới.` : '') +
+          ' Bấm Hoàn tác nếu chưa ưng.',
+      )
+    } catch (e) {
+      setMessage(`Viết lời bằng AI lỗi: ${e instanceof Error ? e.message : String(e)}`)
+    } finally {
+      setAiBusy(false)
+    }
   }
 
   // ----- Cloud -----
@@ -1086,6 +1151,9 @@ export default function App() {
                 onDownload={exportLyrics}
                 locks={locks}
                 onLock={setLock}
+                aiAvailable={serverOk === false ? false : aiOk}
+                aiBusy={aiBusy}
+                onAiWrite={(topic, mode) => void writeLyricsAi(topic, mode)}
               />
             )}
             {tab === 'vocal' && (
@@ -1141,7 +1209,7 @@ export default function App() {
             className="cmd"
             onSubmit={(e) => {
               e.preventDefault()
-              submitCommand()
+              void submitCommand()
             }}
           >
             <label className="side-h" htmlFor="cmd-input">
@@ -1151,11 +1219,11 @@ export default function App() {
               id="cmd-input"
               value={command}
               onChange={(e) => setCommand(e.target.value)}
-              placeholder="Ví dụ: nhanh hơn, đổi sang buồn, giọng La thứ, thêm điệp khúc, dùng sáo trúc"
+              placeholder={aiOk ? 'Nói tự nhiên, ví dụ: cho buồn như chiều mưa và chậm lại, đổi sáo trúc' : 'Ví dụ: nhanh hơn, đổi sang buồn, giọng La thứ, thêm điệp khúc, dùng sáo trúc'}
               autoComplete="off"
             />
-            <button className="btn btn-sm btn-primary" type="submit" disabled={!command.trim()}>
-              Làm
+            <button className="btn btn-sm btn-primary" type="submit" disabled={!command.trim() || aiBusy}>
+              {aiBusy ? 'Đang hỏi AI...' : 'Làm'}
             </button>
           </form>
           {commandEcho && (
