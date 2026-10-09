@@ -108,7 +108,9 @@ Image cũng chạy được ở nơi khác hỗ trợ Docker (Railway, Fly.io, H
 | Biến | Mặc định | Ý nghĩa |
 |---|---|---|
 | `DATABASE_URL` | `sqlite:///./aicomposer.db` | Chuỗi kết nối. Nhận cả dạng `postgres://…` của Render/Heroku |
-| `MAX_UPLOAD_MB` | `15` | Dung lượng tối đa của file ghi âm |
+| `MAX_UPLOAD_MB` | `15` | Dung lượng tối đa của file ghi giọng hát |
+| `HUM_MAX_UPLOAD_MB` | `200` | Dung lượng tối đa của file ngân nga tải lên (lưu tạm ra đĩa, không giữ trong RAM) |
+| `HUM_MAX_MINUTES` | `15` | Bản ngân dài hơn thì chỉ lấy chừng này phút đầu. 15 phút dùng khoảng 420 MB RAM lúc xử lý, vừa máy Render miễn phí (512 MB); máy mạnh hơn thì tăng lên |
 | `CORS_ORIGINS` | (trống) | Chỉ cần khi frontend nằm ở domain khác, ngăn cách bằng dấu phẩy |
 | `HUMMING_MODEL` | `backend/models/humming_onset.json` | File model dò onset; không có file thì dùng cách tách nốt mặc định, `none` để tắt |
 | `GEMINI_API_KEY` | (trống) | Bật viết lời và hiểu lệnh tự do bằng AI, dùng Gemini của Google (có gói miễn phí, lấy khoá ở aistudio.google.com). Không có khoá AI nào thì ẩn phần AI, mọi thứ khác vẫn chạy |

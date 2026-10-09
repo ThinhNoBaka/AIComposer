@@ -40,6 +40,8 @@ SPECTRAL = ("flux", "onset_strength")
 
 # ---------- Đặc trưng ----------
 
+PREDICT_BLOCK = 16384
+
 
 def _fit(x: np.ndarray, n: int) -> np.ndarray:
     """Cắt hoặc đệm (lặp giá trị cuối) cho đúng n khung."""
@@ -53,11 +55,26 @@ def spectral_features(y: np.ndarray, sr: int, n: int) -> tuple[np.ndarray, np.nd
     """Spectral flux và onset strength, cùng lưới khung với pYIN (hop 10 ms, khung căn giữa)."""
     import librosa
 
+    from .pitch import framewise
+
     y = np.asarray(y, dtype=np.float32)
-    mag = np.abs(librosa.stft(y, n_fft=FRAME, hop_length=HOP))
-    logmag = np.log1p(10.0 * mag)
-    flux = np.concatenate([[0.0], np.maximum(0.0, np.diff(logmag, axis=1)).sum(axis=0)])
-    onset_env = librosa.onset.onset_strength(y=y, sr=sr, hop_length=HOP)
+    # Tính theo từng đoạn để bản thu dài không tốn bộ nhớ. Onset strength làm giống librosa.onset.onset_strength
+    # (mel dB so với đỉnh cả bản, cắt ở -80 dB, chênh dương giữa hai khung liền nhau lấy trung bình các dải mel,
+    # dời 7 khung) nên cần đỉnh mel của cả bản trước: lượt đầu chỉ tìm đỉnh, lượt sau mới tính.
+    peak = float(framewise(y, lambda seg: librosa.feature.melspectrogram(y=seg, sr=sr, hop_length=HOP).max(axis=0, keepdims=True)).max())
+    ref_db = 10.0 * np.log10(max(1e-10, peak))
+
+    def one(seg: np.ndarray) -> np.ndarray:
+        logmag = np.log1p(10.0 * np.abs(librosa.stft(seg, n_fft=FRAME, hop_length=HOP)))
+        flux = np.concatenate([[0.0], np.maximum(0.0, np.diff(logmag, axis=1)).sum(axis=0)])
+        db = 10.0 * np.log10(np.maximum(librosa.feature.melspectrogram(y=seg, sr=sr, hop_length=HOP), 1e-10)) - ref_db
+        np.maximum(db, -80.0, out=db)
+        rise = np.concatenate([[0.0], np.maximum(0.0, np.diff(db, axis=1)).mean(axis=0)])  # rise[j]: khung j so với j-1
+        return np.stack([flux, rise])
+
+    flux, rise = framewise(y, one)
+    shift = 1 + 2048 // (2 * HOP)  # lag 1 + nửa khung n_fft mặc định của melspectrogram
+    onset_env = np.concatenate([np.zeros(shift), rise[1:]])[: len(rise)]
     return _fit(flux, n), _fit(onset_env, n)
 
 
@@ -104,19 +121,27 @@ def stacked_names(base: list[str] | tuple[str, ...], context: int) -> list[str]:
     return [f"{name}@{off:+d}" for off in range(-context, context + 1) for name in base]
 
 
+def base_matrix(track: PitchTrack, y: np.ndarray | None, base: list[str] | tuple[str, ...]) -> np.ndarray:
+    """Ma trận [số khung, len(base)] các đặc trưng gốc."""
+    if len(track.midi) == 0:
+        return np.zeros((0, len(base)))
+    feats = base_features(track, y if any(b in SPECTRAL for b in base) else None)
+    return np.stack([feats[name] for name in base], axis=1)
+
+
+def stack_context(m: np.ndarray, context: int, a: int = 0, b: int | None = None) -> np.ndarray:
+    """Các hàng a..b của ma trận có kèm khung lân cận: [khung, cột * (2*context+1)], mép lặp giá trị khung đầu/cuối."""
+    n = len(m)
+    b = n if b is None else min(b, n)
+    idx = np.clip(np.arange(a, b)[:, None] + np.arange(-context, context + 1)[None, :], 0, max(0, n - 1))
+    return m[idx].reshape(b - a, -1) if n else np.zeros((0, m.shape[1] * (2 * context + 1)))
+
+
 def frame_features(
     track: PitchTrack, y: np.ndarray | None = None, base: list[str] | tuple[str, ...] = BASE_FEATURES, context: int = 3
 ) -> np.ndarray:
     """Ma trận [số khung, len(base) * (2*context+1)]: đặc trưng của khung và các khung lân cận."""
-    n = len(track.midi)
-    width = len(base) * (2 * context + 1)
-    if n == 0:
-        return np.zeros((0, width))
-    feats = base_features(track, y if any(b in SPECTRAL for b in base) else None)
-    m = np.stack([feats[name] for name in base], axis=1)
-    padded = np.pad(m, ((context, context), (0, 0)), mode="edge")
-    cols = [padded[context + off : context + off + n] for off in range(-context, context + 1)]
-    return np.concatenate(cols, axis=1)
+    return stack_context(base_matrix(track, y, base), context)
 
 
 def pick_peaks(prob: np.ndarray, threshold: float, min_gap: int) -> np.ndarray:
@@ -212,9 +237,12 @@ class OnsetModel:
         return h[:, 0]
 
     def predict(self, track: PitchTrack, y: np.ndarray | None = None) -> np.ndarray:
-        """Xác suất mỗi khung là onset."""
-        x = frame_features(track, y, self.base, self.context)
-        return self.predict_matrix(x) if len(x) else np.zeros(0)
+        """Xác suất mỗi khung là onset. Tính từng khối khung để bản thu dài không phải dựng cả ma trận đặc trưng."""
+        m = base_matrix(track, y, self.base)
+        out = np.zeros(len(m))
+        for a in range(0, len(m), PREDICT_BLOCK):
+            out[a : a + PREDICT_BLOCK] = self.predict_matrix(stack_context(m, self.context, a, a + PREDICT_BLOCK))
+        return out
 
     def onset_frames(self, track: PitchTrack, y: np.ndarray | None = None) -> np.ndarray:
         return pick_peaks(self.predict(track, y), self.threshold, self.min_gap_frames)

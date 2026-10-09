@@ -3,7 +3,7 @@ import { addRound, appendHumming, applyHumming, arrangeSong, canAppend, contentE
 import { getMood, songFromMood } from './moods'
 import { bassNotes, drumHits } from './accompany'
 import { isInScale } from './theory'
-import { validateSong } from './song'
+import { MAX_BARS, validateSong } from './song'
 
 const HUM = {
   bpm: 96,
@@ -45,12 +45,13 @@ describe('đưa bản ngân nga vào bài', () => {
     for (const n of song.melody) expect(isInScale(n.pitch, 9, 'minor')).toBe(true)
   })
 
-  it('bản ngân quá dài bị cắt ở 256 ô và báo số nốt bỏ', () => {
-    const long = { ...HUM, bars: 300, melody: Array.from({ length: 1200 }, (_, i) => ({ pitch: 67, start: i * 4, dur: 4, vel: 90 })) }
+  it('bản ngân quá dài bị cắt ở MAX_BARS ô và báo số nốt bỏ', () => {
+    const bars = MAX_BARS + 44
+    const long = { ...HUM, bars, melody: Array.from({ length: bars * 4 }, (_, i) => ({ pitch: 67, start: i * 4, dur: 4, vel: 90 })) }
     const { song, dropped } = applyHumming(songFromMood(getMood('vui')), long, { useKey: true, useBpm: true, autoHarmony: false })
-    expect(song.bars).toBe(256)
+    expect(song.bars).toBe(MAX_BARS)
     expect(dropped).toBe(176)
-    expect(Math.max(...song.melody.map((n) => n.start + n.dur))).toBeLessThanOrEqual(256 * 16)
+    expect(Math.max(...song.melody.map((n) => n.start + n.dur))).toBeLessThanOrEqual(MAX_BARS * 16)
   })
 })
 
@@ -123,10 +124,11 @@ describe('ngân từng đoạn rồi ghép', () => {
   })
 
   it('bài quá dài thì không lặp điệp khúc', () => {
-    const big = applyHumming(songFromMood(getMood('vui')), { ...HUM, bars: 128, melody: Array.from({ length: 512 }, (_, i) => ({ pitch: 67, start: i * 4, dur: 4, vel: 90 })) }, { useKey: true, useBpm: true, autoHarmony: false }).song
+    const half = MAX_BARS / 2 // dài quá nửa giới hạn: lặp thêm một lần là vượt MAX_BARS
+    const big = applyHumming(songFromMood(getMood('vui')), { ...HUM, bars: half, melody: Array.from({ length: half * 4 }, (_, i) => ({ pitch: 67, start: i * 4, dur: 4, vel: 90 })) }, { useKey: true, useBpm: true, autoHarmony: false }).song
     const s = arrangeSong(big, 1, 600)
     expect(s.sections?.map((x) => x.kind)).toEqual(['intro', 'verse', 'outro'])
-    expect(s.bars).toBe(4 + 128 + 2)
+    expect(s.bars).toBe(4 + half + 2)
   })
 })
 

@@ -3,8 +3,8 @@ import type { Chord, Mode } from './theory'
 /** Số bước (nốt móc kép) trong một ô nhịp 4/4. */
 export const STEPS_PER_BAR = 16
 
-/** Giới hạn số ô nhịp của cả bài. 256 ô ở 120 BPM là hơn 8 phút. */
-export const MAX_BARS = 256
+/** Giới hạn số ô nhịp của cả bài. 1024 ô ở 120 BPM là hơn 34 phút. */
+export const MAX_BARS = 1024
 
 export type Note = {
   id: string

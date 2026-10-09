@@ -82,6 +82,16 @@ export const api = {
     if (opts.projectId) fd.append('project_id', opts.projectId)
     return request<HummingResult>('/api/humming', { method: 'POST', body: fd })
   },
+  hummingLimits: () => request<HummingLimits>('/api/humming/limits'),
+  /** Gửi bản ngân để máy chủ xử lý chạy nền; hỏi tiến độ bằng hummingJob. */
+  startHummingJob: (audio: Blob, filename: string, opts: { bpm?: number; projectId?: string }) => {
+    const fd = new FormData()
+    fd.append('audio', audio, filename)
+    if (opts.bpm) fd.append('bpm', String(opts.bpm))
+    if (opts.projectId) fd.append('project_id', opts.projectId)
+    return request<HummingJob>('/api/humming/jobs', { method: 'POST', body: fd })
+  },
+  hummingJob: (id: string) => request<HummingJob>(`/api/humming/jobs/${id}`),
   uploadVocal: (audio: Blob, filename: string, opts: { offsetMs: number; bpm?: number; projectId?: string }) => {
     const fd = new FormData()
     fd.append('audio', audio, filename)
@@ -156,4 +166,17 @@ export type HummingResult = {
   duration_sec: number
   melody: { pitch: number; start: number; dur: number; vel: number }[]
   raw_notes: { onset: number; offset: number; pitch: number }[]
+  /** Bản thu dài hơn giới hạn của máy chủ: chỉ lấy phần đầu. */
+  truncated?: boolean
+}
+
+export type HummingLimits = { max_minutes: number; max_upload_mb: number }
+export type HummingJob = {
+  job_id: string
+  status: 'queued' | 'running' | 'done' | 'error'
+  progress: number
+  /** Số bản đang chờ hoặc đang xử lý trước bản này. */
+  ahead?: number
+  result?: HummingResult
+  error?: string
 }

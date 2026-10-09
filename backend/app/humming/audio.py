@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import io
+import os
 import shutil
 import subprocess
+import tempfile
 
 import numpy as np
 import soundfile as sf
@@ -57,3 +59,40 @@ def load_audio(data: bytes, sr: int = TARGET_SR) -> np.ndarray:
 
         y = librosa.resample(y, orig_sr=file_sr, target_sr=sr)
     return y.astype(np.float32)
+
+
+def load_audio_file(path: str, sr: int = TARGET_SR) -> np.ndarray:
+    """Như load_audio nhưng đọc từ file trên đĩa và ghi kết quả ra file tạm: bản thu dài không phải giữ hai bản trong RAM."""
+    exe = ffmpeg_exe()
+    if not exe:
+        with open(path, "rb") as f:
+            return load_audio(f.read(), sr)
+    fd, out = tempfile.mkstemp(suffix=".f32")
+    os.close(fd)
+    try:
+        proc = subprocess.run(
+            [exe, "-v", "error", "-y", "-i", path, "-ac", "1", "-ar", str(sr), "-f", "f32le", out],
+            capture_output=True,
+            timeout=900,
+        )
+        if proc.returncode != 0:
+            raise AudioDecodeError("Không giải mã được file audio: " + proc.stderr.decode(errors="ignore")[-200:])
+        y = np.fromfile(out, dtype=np.float32)
+    finally:
+        os.unlink(out)
+    if not len(y):
+        raise AudioDecodeError("File audio rỗng.")
+    return y
+
+
+def compress_for_storage(path: str) -> bytes | None:
+    """Nén bản thu thành Opus mono 24 kbps (20 phút khoảng 4 MB) để lưu vào database. Không nén được thì None."""
+    exe = ffmpeg_exe()
+    if not exe:
+        return None
+    proc = subprocess.run(
+        [exe, "-v", "error", "-i", path, "-ac", "1", "-ar", "16000", "-c:a", "libopus", "-b:a", "24k", "-f", "ogg", "pipe:1"],
+        capture_output=True,
+        timeout=900,
+    )
+    return proc.stdout if proc.returncode == 0 and proc.stdout else None

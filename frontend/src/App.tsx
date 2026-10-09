@@ -1088,7 +1088,7 @@ export default function App() {
 
                 <section className="side-sec">
                   <h3 className="side-h">2. Ngân nga ý tưởng</h3>
-                  <p className="hint">Cứ ngân “la la” hoặc “đa đa” câu nhạc trong đầu (tối đa 60 giây). Máy nghe ra cao độ, nhịp và giọng rồi phối thành bài.</p>
+                  <p className="hint">Cứ ngân “la la” hoặc “đa đa” câu nhạc trong đầu, dài bao nhiêu cũng được (tới 15 phút mỗi lần, ngân nhiều lần để ghép tiếp). Máy nghe ra cao độ, nhịp và giọng rồi phối thành bài.</p>
                   <HummingPanel
                     song={song}
                     serverOk={serverOk}

@@ -1,11 +1,20 @@
 import { useEffect, useRef, useState } from 'react'
-import { ApiError, api, type HummingResult } from '../api/client'
+import { ApiError, api, type HummingJob, type HummingLimits, type HummingResult } from '../api/client'
 import { MicRecorder, micErrorMessage, recorderSupported, scheduleCountIn } from '../audio/recorder'
 import type { ApplyOptions } from '../core/humming'
-import type { Song } from '../core/song'
+import { MAX_BARS, type Song } from '../core/song'
 import { NOTE_NAMES } from '../core/theory'
 
-const MAX_SECONDS = 60
+/** Dùng khi chưa hỏi được máy chủ; máy chủ báo giới hạn thật qua /api/humming/limits. */
+const DEFAULT_LIMITS: HummingLimits = { max_minutes: 15, max_upload_mb: 200 }
+
+/** 75 giây thành "1:15". */
+function clock(sec: number): string {
+  const s = Math.max(0, Math.floor(sec))
+  return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`
+}
+
+const wait = (ms: number) => new Promise((r) => setTimeout(r, ms))
 
 type Phase = 'idle' | 'opening' | 'countin' | 'recording' | 'working'
 type Take = { blob: Blob; filename: string; url: string; fixedBpm: boolean }
@@ -65,6 +74,9 @@ export function HummingPanel({ song, serverOk, projectId, canAppend, melodyLocke
   const [useBpm, setUseBpm] = useState(true)
   const [autoHarmony, setAutoHarmony] = useState(true)
   const [how, setHow] = useState<'append' | 'replace'>('replace')
+  const [limits, setLimits] = useState<HummingLimits>(DEFAULT_LIMITS)
+  const [job, setJob] = useState<HummingJob | null>(null)
+  const maxSeconds = limits.max_minutes * 60
 
   const ctxRef = useRef<AudioContext | null>(null)
   const recRef = useRef<MicRecorder | null>(null)
@@ -72,20 +84,29 @@ export function HummingPanel({ song, serverOk, projectId, canAppend, melodyLocke
   const fileRef = useRef<HTMLInputElement>(null)
   const songRef = useRef(song)
   songRef.current = song
+  const alive = useRef(true)
 
   const clearTimers = () => {
     timers.current.forEach((t) => clearTimeout(t))
     timers.current = []
   }
 
-  useEffect(
-    () => () => {
+  useEffect(() => {
+    if (serverOk)
+      api.hummingLimits().then(setLimits, () => {
+        /* máy chủ cũ chưa có giới hạn mới: dùng mặc định */
+      })
+  }, [serverOk])
+
+  useEffect(() => {
+    alive.current = true
+    return () => {
+      alive.current = false
       clearTimers()
       recRef.current?.close()
       void ctxRef.current?.close()
-    },
-    [],
-  )
+    }
+  }, [])
   useEffect(() => () => (take ? URL.revokeObjectURL(take.url) : undefined), [take])
 
   // Đồng hồ và mức âm khi đang thu.
@@ -97,7 +118,7 @@ export function HummingPanel({ song, serverOk, projectId, canAppend, melodyLocke
       const s = (performance.now() - started) / 1000
       setSeconds(s)
       setLevel(recRef.current?.level() ?? 0)
-      if (s >= MAX_SECONDS) void stopRecording()
+      if (s >= maxSeconds) void stopRecording()
       else raf = requestAnimationFrame(loop)
     }
     raf = requestAnimationFrame(loop)
@@ -109,15 +130,33 @@ export function HummingPanel({ song, serverOk, projectId, canAppend, melodyLocke
     setPhase('working')
     setError(null)
     setResult(null)
+    setJob(null)
     try {
-      const r = await api.transcribe(t.blob, t.filename, { bpm: t.fixedBpm ? songRef.current.bpm : undefined, projectId })
+      if (t.blob.size > limits.max_upload_mb * 1024 * 1024) throw new Error(`File quá lớn (tối đa ${limits.max_upload_mb} MB).`)
+      // Máy chủ xử lý chạy nền: bản dài mất vài phút, hỏi tiến độ mỗi giây. Mất mạng chốc lát thì hỏi lại.
+      let j = await api.startHummingJob(t.blob, t.filename, { bpm: t.fixedBpm ? songRef.current.bpm : undefined, projectId })
+      let misses = 0
+      while (j.status === 'queued' || j.status === 'running') {
+        setJob(j)
+        await wait(1000)
+        if (!alive.current) return
+        try {
+          j = await api.hummingJob(j.job_id)
+          misses = 0
+        } catch (e) {
+          if (!(e instanceof ApiError && e.status === 0) || ++misses > 10) throw e
+        }
+      }
+      if (j.status === 'error' || !j.result) throw new Error(j.error ?? 'Máy chủ không trả kết quả.')
+      const r = j.result
       setHow(canAppend ? 'append' : 'replace')
       if (!r.melody.length) setError('Không nhận ra nốt nào. Hãy ngân to, rõ, mỗi nốt một tiếng “đa” hoặc “la”, để micro gần hơn.')
       setResult(r)
     } catch (e) {
       setError(serverMessage(e))
     } finally {
-      setPhase('idle')
+      setJob(null)
+      if (alive.current) setPhase('idle')
     }
   }
 
@@ -241,14 +280,24 @@ export function HummingPanel({ song, serverOk, projectId, canAppend, melodyLocke
       )}
       {phase === 'recording' && (
         <div className="hum-live" aria-live="polite">
-          <span className="hum-dot" aria-hidden /> Đang thu {Math.floor(seconds)}s / {MAX_SECONDS}s
+          <span className="hum-dot" aria-hidden /> Đang thu {clock(seconds)} / {clock(maxSeconds)}
           <span className="hum-meter" aria-label="Mức âm micro">
             <span style={{ width: `${Math.round(level * 100)}%` }} />
           </span>
           {seconds > 2 && level < 0.03 && <span className="hint">Micro chưa nghe thấy gì, hãy ngân to hơn.</span>}
         </div>
       )}
-      {working && <div className="hum-live">Đang nghe và nhận nốt…</div>}
+      {working && (
+        <div className="hum-live" aria-live="polite">
+          {job?.status === 'queued'
+            ? `Đang xếp hàng, còn ${job.ahead ?? 1} bản trước bạn…`
+            : `Đang nghe và nhận nốt… ${Math.round((job?.progress ?? 0) * 100)}%`}
+          <span className="hum-meter" aria-label="Tiến độ nhận nốt">
+            <span style={{ width: `${Math.round((job?.progress ?? 0) * 100)}%` }} />
+          </span>
+          {take && take.blob.size > 2_000_000 && <span className="hint">Bản dài xử lý lâu hơn, cứ để trang mở.</span>}
+        </div>
+      )}
       {error && <p className="hum-error">{error}</p>}
 
       {take && !recording && <audio className="hum-audio" controls src={take.url} />}
@@ -256,9 +305,10 @@ export function HummingPanel({ song, serverOk, projectId, canAppend, melodyLocke
       {result && result.melody.length > 0 && (
         <div className="hum-result">
           <p className="hum-summary">
-            Nhận được <b>{result.melody.length} nốt</b> trong {result.duration_sec.toFixed(1)} giây, giọng <b>{keyLabel}</b>
+            Nhận được <b>{result.melody.length} nốt</b> trong {result.duration_sec < 60 ? `${result.duration_sec.toFixed(1)} giây` : clock(result.duration_sec)}, giọng <b>{keyLabel}</b>
             {result.key_confidence < 0.5 && ' (chưa chắc chắn)'}, khoảng <b>{Math.round(result.bpm)} BPM</b>, dài {result.bars} ô nhịp. Xử lý mất{' '}
-            {(result.elapsed_ms / 1000).toFixed(1)} giây.
+            {result.elapsed_ms < 60000 ? `${(result.elapsed_ms / 1000).toFixed(1)} giây` : clock(result.elapsed_ms / 1000)}.
+            {result.truncated && ` Bản thu dài hơn ${limits.max_minutes} phút nên máy chỉ lấy ${limits.max_minutes} phút đầu.`}
           </p>
           <RawNotes result={result} />
           {song.melody.length > 0 && (
@@ -273,7 +323,7 @@ export function HummingPanel({ song, serverOk, projectId, canAppend, melodyLocke
           )}
           {song.melody.length > 0 && !canAppend && (
             <p className="hint">
-              {song.sections ? 'Bài đã hoàn thiện nên không ghép thêm được. Bấm Hoàn tác để bỏ bước hoàn thiện rồi ghép tiếp.' : 'Bài đã đủ dài (256 ô nhịp).'}
+              {song.sections ? 'Bài đã hoàn thiện nên không ghép thêm được. Bấm Hoàn tác để bỏ bước hoàn thiện rồi ghép tiếp.' : `Bài đã đủ dài (${MAX_BARS} ô nhịp).`}
             </p>
           )}
           <div className="hum-opts">
