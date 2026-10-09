@@ -6,6 +6,7 @@ import { createRng } from './rng'
 import { melodyRange } from './melody'
 import { STEPS_PER_BAR, newId, type Note, type Song } from './song'
 import { chordPcs, degreeToMidi, midiToDegree } from './theory'
+import { expectedDegreeMove, hintThreshold, intervalPreference, sampleDegreeMove, tailProbability } from './toneModel'
 
 // ---------- Thanh điệu ----------
 
@@ -32,6 +33,13 @@ const TONE_MARKS_RE = /[̣̀́̃̉]/g
 
 /** Độ cao tương đối khi nói: sắc, ngã cao; ngang ở giữa; hỏi, huyền, nặng thấp. */
 const TONE_HEIGHT: Record<Tone, number> = { sac: 2, nga: 2, ngang: 1, hoi: 0, huyen: 0, nang: 0 }
+
+/** Hướng nên đi từ chữ thanh `a` sang chữ thanh `b`: dương là lên, âm là xuống. Theo bảng học được nếu có, không thì theo luật. */
+function toneDirection(a: Tone, b: Tone): number {
+  const e = expectedDegreeMove(a, b)
+  if (e === null) return TONE_HEIGHT[b] - TONE_HEIGHT[a]
+  return e > 0.25 ? 1 : e < -0.25 ? -1 : 0
+}
 
 /** Chỉ giữ chữ cái, viết thường, dạng NFC. */
 export function bareWord(word: string): string {
@@ -197,20 +205,27 @@ export type Alignment = {
 const HEARD_UP: Partial<Record<Tone, Tone>> = { huyen: 'ngang', nang: 'sac', hoi: 'nga', ngang: 'sac' }
 const HEARD_DOWN: Partial<Record<Tone, Tone>> = { sac: 'ngang', nga: 'hoi', ngang: 'huyen' }
 
+/** Luật: giai điệu đi ngược hướng thanh điệu thì trả về hướng đã đi, không thì null. */
+function ruleWent(a: Tone, b: Tone, step: number): 'up' | 'down' | null {
+  const want = TONE_HEIGHT[b] - TONE_HEIGHT[a]
+  // Chỉ cảnh báo khi đi ngược hẳn (lệch từ 2 nửa cung). Thanh hỏi uốn lên xuống nên bỏ qua.
+  if (b === 'hoi' || Math.abs(step) < 2) return null
+  if (want < 0 && step > 0) return 'up'
+  if (want > 0 && step < 0) return 'down'
+  if (want === 0 && b === 'huyen' && step >= 3) return 'up'
+  if (want === 0 && (b === 'sac' || b === 'nga') && step <= -3) return 'down'
+  return null
+}
+
 /** So hướng giai điệu với hướng thanh điệu giữa hai chữ liền nhau. */
 function toneHint(prevWord: string, prevNote: Note, word: string, note: Note, line: number): ToneHint | null {
   const a = toneOf(prevWord)
   const b = toneOf(word)
-  const want = TONE_HEIGHT[b] - TONE_HEIGHT[a]
   const step = note.pitch - prevNote.pitch
-  // Chỉ cảnh báo khi đi ngược hẳn (lệch từ 2 nửa cung). Thanh hỏi uốn lên xuống nên bỏ qua.
-  if (b === 'hoi' || Math.abs(step) < 2) return null
-  let went: 'up' | 'down'
-  if (want < 0 && step > 0) went = 'up'
-  else if (want > 0 && step < 0) went = 'down'
-  else if (want === 0 && b === 'huyen' && step >= 3) went = 'up'
-  else if (want === 0 && (b === 'sac' || b === 'nga') && step <= -3) went = 'down'
-  else return null
+  // Có bảng học từ bài hát thật: cảnh báo khi bước nhảy này (cùng hướng, xa từng này trở lên) hiếm gặp với cặp thanh này.
+  const p = tailProbability(a, b, step)
+  const went = p === null ? ruleWent(a, b, step) : Math.abs(step) >= 2 && p < hintThreshold() ? (step > 0 ? 'up' : 'down') : null
+  if (!went) return null
   const heardTone = (went === 'up' ? HEARD_UP : HEARD_DOWN)[b]
   if (!heardTone) return null
   const heard = withTone(word, heardTone)
@@ -412,10 +427,16 @@ export function melodyFromLyrics(song: Song, lines: LyricLine[], seed: number, f
         // Đầu câu: về gần giữa tầm cữ, lệch theo thanh của chữ đầu.
         deg = nearestChordTone(mid + TONE_HEIGHT[tone] - 1, bar)
       } else {
-        const diff = TONE_HEIGHT[tone] - TONE_HEIGHT[prevTone]
-        let move = diff > 0 ? rng.int(1, 2) : diff < 0 ? -rng.int(1, 2) : rng.pick([-1, 0, 0, 1])
-        if (tone === 'hoi' || tone === 'nang') move = Math.min(move, -1)
-        if (tone === 'sac' && move <= 0) move = 1
+        // Có bảng học từ bài hát thật thì rút bước đi theo xác suất của cặp thanh; không thì theo luật.
+        // Chỉ rút số ngẫu nhiên khi có bảng, để không có bảng thì giai điệu giống hệt trước đây.
+        const learned = intervalPreference(prevTone, tone) ? sampleDegreeMove(prevTone, tone, rng.next()) : null
+        let move = learned ?? 0
+        if (learned === null) {
+          const diff = TONE_HEIGHT[tone] - TONE_HEIGHT[prevTone]
+          move = diff > 0 ? rng.int(1, 2) : diff < 0 ? -rng.int(1, 2) : rng.pick([-1, 0, 0, 1])
+          if (tone === 'hoi' || tone === 'nang') move = Math.min(move, -1)
+          if (tone === 'sac' && move <= 0) move = 1
+        }
         deg = Math.max(lowDeg, Math.min(highDeg, deg + move))
       }
       const last = j === n - 1
@@ -423,7 +444,7 @@ export function melodyFromLyrics(song: Song, lines: LyricLine[], seed: number, f
       const noteBar = Math.floor(noteStart / STEPS_PER_BAR)
       if (last) {
         // Chốt câu bằng nốt hợp âm, tìm theo đúng hướng thanh điệu để không đi ngược thanh.
-        const diff = j > 0 ? TONE_HEIGHT[tone] - TONE_HEIGHT[toneOf(line.syllables[j - 1])] : 0
+        const diff = j > 0 ? toneDirection(toneOf(line.syllables[j - 1]), tone) : 0
         deg = nearestChordTone(deg, noteBar, diff)
       }
       // Chữ cuối ngân tới trước câu sau một phách để lấy hơi (cũng là chỗ tách câu khi gắn lời).

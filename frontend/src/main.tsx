@@ -13,6 +13,10 @@ import '@fontsource/be-vietnam-pro/latin-800.css'
 import '@fontsource/be-vietnam-pro/vietnamese-800.css'
 import './index.css'
 import App from './App.tsx'
+import { loadToneModel } from './core/toneModel'
+
+// Bảng thanh điệu học từ bài hát (nếu đã train và đặt vào public/models). Không có thì dùng luật sẵn có.
+void loadToneModel()
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>

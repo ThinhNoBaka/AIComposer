@@ -9,5 +9,6 @@ __pycache__/
 data/
 reports/*.csv
 
-# Dữ liệu tải về và dữ liệu trung gian của các script ML
+# Dữ liệu tải về và dữ liệu trung gian của các script ML (audio, MIDI, karaoke): không đưa lên git
 ml/**/data/
+data/raw/

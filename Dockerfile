@@ -19,6 +19,9 @@ WORKDIR /app
 COPY backend/requirements.txt .
 RUN pip install -r requirements.txt
 COPY backend/app ./app
+# Mô hình học máy (vd. humming_onset.json). Thư mục có thể chỉ có README: thiếu file thì app dùng cách tách nốt cũ.
+COPY backend/models ./models
+ENV HUMMING_MODEL=/app/models/humming_onset.json
 COPY --from=web /web/dist ./static
 # Không đặt DATABASE_URL thì dùng SQLite trong /app/data (thư mục user app ghi được). Deploy thật thì đặt DATABASE_URL tới PostgreSQL.
 ENV DATABASE_URL=sqlite:////app/data/aicomposer.db
