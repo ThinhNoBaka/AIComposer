@@ -7,8 +7,8 @@ import type { LoadState } from './audio/voices'
 import { MOODS, getMood, progressionToChords } from './core/moods'
 import { continueMelody, generateMelody, shiftMelody, varyMelody } from './core/melody'
 import { songToMidi } from './core/midi'
-import { STEPS_PER_BAR, validateSong, type Note, type Song, type Track, type TrackId } from './core/song'
-import { applyHumming, resizeSong, type ApplyOptions } from './core/humming'
+import { SECTION_LABEL, STEPS_PER_BAR, validateSong, type Note, type Song, type Track, type TrackId } from './core/song'
+import { appendHumming, applyHumming, arrangeSong, canAppend, formatDuration, melodyEndBar, resizeSong, songSeconds, type ApplyOptions } from './core/humming'
 import { harmonize } from './core/suggest'
 import { chordPitches, degreeToMidi, midiToDegree, snapToScale, NOTE_NAMES, type Chord } from './core/theory'
 import { useSongStore } from './state/store'
@@ -43,6 +43,15 @@ function safeName(title: string) {
 }
 
 const randomSeed = () => Math.floor(Math.random() * 1e9)
+
+const BAR_OPTIONS = [4, 8, 16, 32, 48, 64, 96, 128]
+const TARGETS = [
+  { sec: 0, label: 'Ngắn gọn (1 lượt)' },
+  { sec: 120, label: 'Khoảng 2 phút' },
+  { sec: 180, label: 'Khoảng 3 phút' },
+  { sec: 240, label: 'Khoảng 4 phút' },
+  { sec: 300, label: 'Khoảng 5 phút' },
+]
 
 const CLOUD_ID_KEY = 'aicomposer.cloudId'
 function readCloudId(): string | null {
@@ -80,6 +89,7 @@ export default function App() {
   const [cloudId, setCloudIdState] = useState<string | null>(readCloudId)
   const [cloudOpen, setCloudOpen] = useState(false)
   const [saving, setSaving] = useState(false)
+  const [targetSec, setTargetSec] = useState(180)
   const playheadRef = useRef<HTMLDivElement>(null)
   const fileRef = useRef<HTMLInputElement>(null)
 
@@ -223,16 +233,18 @@ export default function App() {
     download(new Blob([songToMidi(song) as BlobPart], { type: 'audio/midi' }), `${safeName(song.title)}.mid`)
   }
   const exportWav = async () => {
+    const loops = song.bars > 16 ? 1 : 2
     setBusy('Đang xuất WAV…')
     try {
       const v = player.voices
       const { blob, usedFallback } = await renderSongToWav(song, {
-        loops: 2,
+        // Bài ngắn xuất 2 vòng cho đủ nghe; bài dài xuất đúng 1 lần.
+        loops,
         customFx,
         customBuffers: v?.customBuffers,
       })
       download(blob, `${safeName(song.title)}.wav`)
-      setMessage(usedFallback ? 'Đã xuất WAV. Một số nhạc cụ chưa tải được nên dùng synth dự phòng (kiểm tra kết nối mạng).' : 'Đã xuất WAV (2 vòng).')
+      setMessage(usedFallback ? 'Đã xuất WAV. Một số nhạc cụ chưa tải được nên dùng synth dự phòng (kiểm tra kết nối mạng).' : `Đã xuất WAV (${formatDuration(songSeconds(song) * loops)}).`)
     } catch (e) {
       setMessage(`Xuất WAV lỗi: ${e instanceof Error ? e.message : String(e)}`)
     } finally {
@@ -289,10 +301,28 @@ export default function App() {
     setCandidates(null)
     setMessage(
       `Đã đưa ${next.melody.length} nốt vào bài${opts.autoHarmony ? ' và chọn hợp âm theo giai điệu' : ''}.` +
-        (dropped ? ` Bỏ ${dropped} nốt vượt quá 16 ô nhịp.` : '') +
+        (dropped ? ` Bỏ ${dropped} nốt vượt quá 128 ô nhịp.` : '') +
         ' Bấm Hoàn tác nếu chưa ưng.',
     )
     if (!player.playing) void togglePlay()
+  }
+
+  const appendHum = (r: HummingResult, opts: { autoHarmony: boolean }) => {
+    const { song: next, dropped } = appendHumming(songRef.current, r, opts)
+    const added = next.melody.length - songRef.current.melody.length
+    update(() => next)
+    setCandidates(null)
+    setMessage(`Đã ghép ${added} nốt vào sau, bài giờ dài ${next.bars} ô nhịp.` + (dropped ? ` Bỏ ${dropped} nốt vượt quá 128 ô.` : '') + ' Ngân tiếp đoạn nữa hoặc bấm Hoàn thiện thành bài.')
+  }
+
+  const arrange = () => {
+    const next = arrangeSong(songRef.current, randomSeed(), targetSec)
+    update(() => next)
+    setCandidates(null)
+    setMessage(`Đã hoàn thiện thành bài dài ${formatDuration(songSeconds(next))} (${next.bars} ô nhịp). Bấm Hoàn tác nếu muốn quay lại.`)
+    if (player.playing) player.stop()
+    setPlaying(false)
+    void player.play(() => songRef.current).then(() => setPlaying(true))
   }
 
   // ----- Cloud -----
@@ -381,6 +411,9 @@ export default function App() {
           aria-label="Tên bài hát"
         />
         <div className="transport">
+          <span className="dur" title="Độ dài bài">
+            ⏱ {formatDuration(songSeconds(song))}
+          </span>
           <button className={`play${playing ? ' on' : ''}`} onClick={() => void togglePlay()} aria-label={playing ? 'Dừng' : 'Phát'}>
             {playing ? '■ Dừng' : '▶ Phát'}
           </button>
@@ -475,7 +508,46 @@ export default function App() {
             Không cần biết nốt nhạc: cứ ngân “la la” hoặc “đa đa” một câu nhạc trong đầu (tối đa 60 giây). Máy sẽ nghe ra cao độ, nhịp và giọng, rồi
             biến thành giai điệu có hợp âm, bass và trống theo cảm xúc bạn chọn.
           </p>
-          <HummingPanel song={song} serverOk={serverOk} projectId={cloudId ?? undefined} onApply={applyHum} />
+          <HummingPanel
+            song={song}
+            serverOk={serverOk}
+            projectId={cloudId ?? undefined}
+            canAppend={canAppend(song)}
+            onApply={applyHum}
+            onAppend={appendHum}
+          />
+          {song.melody.length > 0 && (
+            <div className="flow">
+              {song.sections ? (
+                <div className="structure" aria-label="Cấu trúc bài">
+                  {song.sections.map((x) => (
+                    <span key={x.start} className={`sec sec-${x.kind}`} style={{ flexGrow: x.bars }}>
+                      {SECTION_LABEL[x.kind]} <small>{x.bars} ô</small>
+                    </span>
+                  ))}
+                </div>
+              ) : (
+                <p className="muted-text">
+                  Bài đang có {melodyEndBar(song)} ô giai điệu. Ngân thêm đoạn nữa để ghép tiếp, hoặc để máy thêm dạo đầu, điệp khúc và phần kết.
+                </p>
+              )}
+              {!song.sections && (
+                <label className="field inline">
+                  <span>Độ dài mong muốn</span>
+                  <select value={targetSec} onChange={(e) => setTargetSec(Number(e.target.value))}>
+                    {TARGETS.map((t) => (
+                      <option key={t.sec} value={t.sec}>
+                        {t.label}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              )}
+              <button className="primary" onClick={arrange} disabled={!!song.sections}>
+                {song.sections ? `✓ Đã hoàn thiện (${formatDuration(songSeconds(song))})` : '🎼 Hoàn thiện thành bài'}
+              </button>
+            </div>
+          )}
         </section>
 
         <section className="panel">
@@ -558,10 +630,10 @@ export default function App() {
             <label className="field inline">
               <span>Độ dài bài</span>
               <select value={song.bars} onChange={(e) => update((s) => resizeSong(s, Number(e.target.value)))}>
-                {[4, 8, 12, 16].includes(song.bars) ? null : <option value={song.bars}>{song.bars} ô</option>}
-                {[4, 8, 12, 16].map((b) => (
+                {BAR_OPTIONS.includes(song.bars) ? null : <option value={song.bars}>{song.bars} ô nhịp</option>}
+                {BAR_OPTIONS.map((b) => (
                   <option key={b} value={b}>
-                    {b} ô nhịp
+                    {b} ô nhịp ({formatDuration(songSeconds({ bars: b, bpm: song.bpm }))})
                   </option>
                 ))}
               </select>

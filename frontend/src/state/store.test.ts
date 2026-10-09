@@ -69,3 +69,17 @@ describe('dò tên tiếng trống', () => {
     expect(m2.crash).toBeUndefined()
   })
 })
+
+describe('đổi cảm xúc cho bài đã hoàn thiện', () => {
+  it('giữ cấu trúc và vòng hợp âm, đổi giọng và nhạc cụ', async () => {
+    const { arrangeSong } = await import('../core/humming')
+    const base = songFromMood(getMood('vui'))
+    const done = arrangeSong({ ...base, melody: generateMelody(base, { seed: 3 }) }, 1, 120)
+    const next = applyMood(done, 'buon')
+    expect(next.sections).toEqual(done.sections)
+    expect(next.chords).toEqual(done.chords)
+    expect(next.bars).toBe(done.bars)
+    expect(next.tonic).toBe(getMood('buon').tonic)
+    for (const n of next.melody) expect(isInScale(n.pitch, next.tonic, next.mode)).toBe(true)
+  })
+})

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { applyHumming, resizeSong } from './humming'
+import { appendHumming, applyHumming, arrangeSong, canAppend, fitShift, formatDuration, resizeSong, songSeconds } from './humming'
 import { getMood, songFromMood } from './moods'
 import { bassNotes, drumHits } from './accompany'
 import { isInScale } from './theory'
@@ -45,26 +45,103 @@ describe('đưa bản ngân nga vào bài', () => {
     for (const n of song.melody) expect(isInScale(n.pitch, 9, 'minor')).toBe(true)
   })
 
-  it('bản ngân quá dài bị cắt ở 16 ô và báo số nốt bỏ', () => {
-    const long = { ...HUM, bars: 20, melody: Array.from({ length: 80 }, (_, i) => ({ pitch: 67, start: i * 4, dur: 4, vel: 90 })) }
-    const { song, dropped } = applyHumming(songFromMood(getMood('vui')), long, { useKey: true, useBpm: true, autoHarmony: true })
-    expect(song.bars).toBe(16)
-    expect(dropped).toBe(16)
-    expect(Math.max(...song.melody.map((n) => n.start + n.dur))).toBeLessThanOrEqual(256)
+  it('bản ngân quá dài bị cắt ở 128 ô và báo số nốt bỏ', () => {
+    const long = { ...HUM, bars: 150, melody: Array.from({ length: 600 }, (_, i) => ({ pitch: 67, start: i * 4, dur: 4, vel: 90 })) }
+    const { song, dropped } = applyHumming(songFromMood(getMood('vui')), long, { useKey: true, useBpm: true, autoHarmony: false })
+    expect(song.bars).toBe(128)
+    expect(dropped).toBe(88)
+    expect(Math.max(...song.melody.map((n) => n.start + n.dur))).toBeLessThanOrEqual(128 * 16)
+  })
+})
+
+describe('ngân từng đoạn rồi ghép', () => {
+  const first = () => applyHumming(songFromMood(getMood('vui')), HUM, { useKey: true, useBpm: true, autoHarmony: true }).song
+
+  it('đoạn sau nối tiếp sau đoạn trước, giữ hợp âm cũ, dịch về giọng của bài', () => {
+    const s1 = first()
+    // Đoạn 2 ngân cao hơn 2 nửa cung (giọng La trưởng) so với bài (Sol trưởng).
+    const part2 = { ...HUM, tonic: 9, melody: HUM.melody.map((n) => ({ ...n, pitch: n.pitch + 2 })) }
+    const { song: s2, dropped } = appendHumming(s1, part2, { autoHarmony: true })
+    expect(dropped).toBe(0)
+    expect(s2.bars).toBe(8)
+    expect(s2.chords).toHaveLength(8)
+    expect(s2.chords.slice(0, 4)).toEqual(s1.chords)
+    expect(s2.melody).toHaveLength(HUM.melody.length * 2)
+    const added = s2.melody.slice(HUM.melody.length)
+    expect(added[0].start).toBe(4 * 16)
+    expect(added.map((n) => n.pitch)).toEqual(HUM.melody.map((n) => n.pitch))
+    expect(validateSong(s2)).toBeNull()
+  })
+
+  it('fitShift chọn dịch ít nhất khi đã khớp thang', () => {
+    expect(fitShift(HUM, 7, 'major')).toBe(0)
+    expect(fitShift({ ...HUM, melody: HUM.melody.map((n) => ({ ...n, pitch: n.pitch - 1 })) }, 7, 'major')).toBe(1)
+  })
+
+  it('hoàn thiện thành bài: dạo đầu, đoạn chính, điệp khúc, kết về chủ âm', () => {
+    const base = appendHumming(first(), HUM, { autoHarmony: true }).song // 8 ô giai điệu
+    const s = arrangeSong(base, 5)
+    expect(s.sections?.map((x) => [x.kind, x.start, x.bars])).toEqual([
+      ['intro', 0, 4],
+      ['verse', 4, 8],
+      ['chorus', 12, 8],
+      ['outro', 20, 2],
+    ])
+    expect(s.bars).toBe(22)
+    expect(s.chords).toHaveLength(22)
+    expect(s.chords[3].degree).toBe(4)
+    expect(s.chords.slice(4, 12)).toEqual(base.chords)
+    expect(s.chords.at(-1)!.degree).toBe(0)
+    expect(validateSong(s)).toBeNull()
+    // Dạo đầu không có giai điệu, không trống.
+    expect(s.melody.every((n) => n.start >= 4 * 16)).toBe(true)
+    const drums = drumHits(s)
+    expect(drums.some((h) => h.start < 4 * 16)).toBe(false)
+    // Điệp khúc đệm dày hơn đoạn chính.
+    const bassIn = (from: number, to: number) => bassNotes(s).filter((n) => n.start >= from * 16 && n.start < to * 16).length
+    expect(bassIn(12, 20)).toBeGreaterThan(bassIn(4, 12))
+    // Kết bằng chủ âm (Sol), có riser dẫn vào điệp khúc.
+    const lastNote = s.melody.reduce((a, b) => (b.start > a.start ? b : a))
+    expect(lastNote.pitch % 12).toBe(7)
+    expect(lastNote.start).toBe(20 * 16)
+    expect(s.fx.some((f) => f.fx === 'riser' && f.start === 11 * 16)).toBe(true)
+    expect(canAppend(s)).toBe(false)
+  })
+
+  it('kéo dài tới thời lượng mong muốn bằng cách lặp đoạn chính và điệp khúc', () => {
+    const base = appendHumming(first(), HUM, { autoHarmony: true }).song // 8 ô, 96 BPM: 1 ô = 2.5 giây
+    const s = arrangeSong(base, 5, 180)
+    expect(s.sections?.map((x) => x.kind)).toEqual(['intro', 'verse', 'chorus', 'verse', 'chorus', 'verse', 'chorus', 'verse', 'chorus', 'chorus', 'outro'])
+    expect(songSeconds(s)).toBeLessThan(180 + 8 * 2.5)
+    expect(songSeconds(s)).toBeGreaterThanOrEqual(180)
+    expect(validateSong(s)).toBeNull()
+    // Các điệp khúc giống nhau.
+    const notesIn = (from: number) => s.melody.filter((n) => n.start >= from * 16 && n.start < (from + 8) * 16).map((n) => [n.pitch, n.start - from * 16])
+    const choruses = s.sections!.filter((x) => x.kind === 'chorus').map((x) => notesIn(x.start))
+    expect(choruses[1]).toEqual(choruses[0])
+    expect(formatDuration(songSeconds(s))).toMatch(/^\d+:\d\d$/)
+  })
+
+  it('bài quá dài thì không lặp điệp khúc', () => {
+    const big = applyHumming(songFromMood(getMood('vui')), { ...HUM, bars: 64, melody: Array.from({ length: 256 }, (_, i) => ({ pitch: 67, start: i * 4, dur: 4, vel: 90 })) }, { useKey: true, useBpm: true, autoHarmony: false }).song
+    const s = arrangeSong(big, 1, 600)
+    expect(s.sections?.map((x) => x.kind)).toEqual(['intro', 'verse', 'outro'])
+    expect(s.bars).toBe(4 + 64 + 2)
   })
 })
 
 describe('đổi độ dài bài', () => {
-  it('thêm ô thì lặp vòng hợp âm, bớt ô thì cắt nốt và hiệu ứng', () => {
+  it('thêm ô thì lặp vòng hợp âm, bớt ô thì cắt nốt, hiệu ứng và bỏ cấu trúc', () => {
     const base = { ...songFromMood(getMood('vui'), 4), fx: [{ id: 'a', fx: 'riser', start: 60 }] }
     base.chords = [0, 5, 3, 4].map((degree) => ({ degree, seventh: false }))
     const longer = resizeSong(base, 8)
     expect(longer.chords.map((c) => c.degree)).toEqual([0, 5, 3, 4, 0, 5, 3, 4])
-    const withNotes = { ...longer, melody: [{ id: 'x', pitch: 60, start: 28, dur: 8, vel: 90 }, { id: 'y', pitch: 62, start: 40, dur: 4, vel: 90 }] }
+    const withNotes = { ...longer, sections: [{ kind: 'verse' as const, start: 0, bars: 8 }], melody: [{ id: 'x', pitch: 60, start: 28, dur: 8, vel: 90 }, { id: 'y', pitch: 62, start: 40, dur: 4, vel: 90 }] }
     const shorter = resizeSong(withNotes, 2)
     expect(shorter.chords).toHaveLength(2)
     expect(shorter.melody).toEqual([{ id: 'x', pitch: 60, start: 28, dur: 4, vel: 90 }])
     expect(shorter.fx).toHaveLength(0)
+    expect(shorter.sections).toBeUndefined()
     expect(validateSong(shorter)).toBeNull()
   })
 })

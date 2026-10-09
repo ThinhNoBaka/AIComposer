@@ -1,6 +1,6 @@
 // Đệm tự động: hợp âm (block / nhịp / rải), bass và trống, suy ra từ vòng hợp âm.
 
-import { STEPS_PER_BAR, type Song } from './song'
+import { STEPS_PER_BAR, densityAt, sectionAt, type Song } from './song'
 import { chordPitches } from './theory'
 
 export type AccNote = { pitch: number; start: number; dur: number; vel: number }
@@ -56,23 +56,29 @@ export function chordTrackNotes(song: Song): AccNote[] {
   const voicings = voiceChords(song)
   voicings.forEach((v, bar) => {
     const t0 = bar * STEPS_PER_BAR
+    const density = densityAt(song, bar)
+    if (sectionAt(song, bar)?.kind === 'outro') {
+      // Phần kết: hợp âm ngân dài, không nhịp.
+      v.forEach((p) => out.push({ pitch: p, start: t0, dur: 16, vel: 70 }))
+      return
+    }
     if (song.chordStyle === 'block') {
-      if (song.density === 2) {
+      if (density === 2) {
         for (const s of [0, 8]) v.forEach((p) => out.push({ pitch: p, start: t0 + s, dur: 8, vel: s === 0 ? 80 : 66 }))
       } else {
         v.forEach((p) => out.push({ pitch: p, start: t0, dur: 16, vel: 76 }))
       }
     } else if (song.chordStyle === 'pulse') {
-      const every = song.density === 0 ? 8 : song.density === 1 ? 4 : 2
+      const every = density === 0 ? 8 : density === 1 ? 4 : 2
       for (let s = 0; s < STEPS_PER_BAR; s += every) {
         const accent = s % 8 === 0
         v.forEach((p) => out.push({ pitch: p, start: t0 + s, dur: Math.max(1, every - 1), vel: accent ? 82 : 66 }))
       }
     } else {
       // Rải hợp âm: lên rồi xuống.
-      const tones = song.density === 2 ? [...v, v[0] + 12] : v
+      const tones = density === 2 ? [...v, v[0] + 12] : v
       const order = [...tones.keys(), ...[...tones.keys()].reverse().slice(1, -1)]
-      const every = song.density === 0 ? 4 : 2
+      const every = density === 0 ? 4 : 2
       let k = 0
       for (let s = 0; s < STEPS_PER_BAR; s += every) {
         const p = tones[order[k % order.length]]
@@ -100,12 +106,13 @@ export function bassNotes(song: Song): AccNote[] {
     const root = bassRoot(song, bar)
     const triad = chordPitches(song.chords[bar], song.tonic, song.mode, 2)
     const fifth = root + (triad[2] - triad[0])
-    if (song.drumStyle === 'dance' && song.density > 0) {
+    const density = densityAt(song, bar)
+    if (song.drumStyle === 'dance' && density > 0) {
       for (const s of [2, 6, 10, 14]) out.push({ pitch: root, start: t0 + s, dur: 2, vel: 96 })
-      if (song.density === 2) for (const s of [0, 8]) out.push({ pitch: root, start: t0 + s, dur: 1, vel: 70 })
-    } else if (song.density === 0) {
+      if (density === 2) for (const s of [0, 8]) out.push({ pitch: root, start: t0 + s, dur: 1, vel: 70 })
+    } else if (density === 0) {
       out.push({ pitch: root, start: t0, dur: 16, vel: 92 })
-    } else if (song.density === 1) {
+    } else if (density === 1) {
       out.push({ pitch: root, start: t0, dur: 7, vel: 96 })
       out.push({ pitch: root, start: t0 + 8, dur: 5, vel: 84 })
       out.push({ pitch: fifth, start: t0 + 14, dur: 2, vel: 76 })
@@ -119,13 +126,26 @@ export function bassNotes(song: Song): AccNote[] {
 
 export function drumHits(song: Song): DrumHit[] {
   const out: DrumHit[] = []
-  const d = song.density
   const add = (bar: number, sound: DrumSound, steps: number[], vel: number) => {
     for (const s of steps) out.push({ sound, start: bar * STEPS_PER_BAR + s, vel })
   }
   for (let bar = 0; bar < song.bars; bar++) {
-    const phraseStart = bar % 4 === 0
-    const phraseEnd = bar % 4 === 3
+    const section = sectionAt(song, bar)
+    const d = densityAt(song, bar)
+    const local = section ? bar - section.start : bar
+    const phraseStart = local % 4 === 0
+    const phraseEnd = local % 4 === 3 || (!!section && local === section.bars - 1)
+    // Dạo đầu không trống; phần kết chỉ còn một tiếng cymbal + kick mở đầu.
+    if (section?.kind === 'intro') continue
+    if (section?.kind === 'outro') {
+      if (local === 0 && song.drumStyle !== 'none') {
+        add(bar, 'kick', [0], 110)
+        add(bar, 'crash', [0], 100)
+      }
+      continue
+    }
+    // Vào điệp khúc luôn có cymbal.
+    if (section?.kind === 'chorus' && local === 0 && (song.drumStyle === 'ballad' || song.drumStyle === 'lofi')) add(bar, 'crash', [0], 95)
     switch (song.drumStyle) {
       case 'pop':
         add(bar, 'kick', d === 2 ? [0, 8, 10] : [0, 8], 110)

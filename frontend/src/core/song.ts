@@ -36,6 +36,18 @@ export type FxEvent = {
   start: number
 }
 
+export type SectionKind = 'intro' | 'verse' | 'chorus' | 'outro'
+
+/** Một phần của bài, tính bằng ô nhịp. */
+export type Section = { kind: SectionKind; start: number; bars: number }
+
+export const SECTION_LABEL: Record<SectionKind, string> = {
+  intro: 'Dạo đầu',
+  verse: 'Đoạn chính',
+  chorus: 'Điệp khúc',
+  outro: 'Kết',
+}
+
 export type Song = {
   version: 1
   title: string
@@ -57,12 +69,26 @@ export type Song = {
   fx: FxEvent[]
   fxVolume: number
   seed: number
+  /** Cấu trúc bài sau khi bấm "Hoàn thiện thành bài". Không có = cả bài là một đoạn. */
+  sections?: Section[]
 }
 
 let counter = 0
 export function newId(prefix = 'n'): string {
   counter += 1
   return `${prefix}${Date.now().toString(36)}${counter.toString(36)}${Math.floor(Math.random() * 1e4).toString(36)}`
+}
+
+export function sectionAt(song: Song, bar: number): Section | undefined {
+  return song.sections?.find((x) => bar >= x.start && bar < x.start + x.bars)
+}
+
+/** Độ dày phần đệm ở từng ô: dạo đầu và kết thưa, điệp khúc dày hơn đoạn chính một bậc. */
+export function densityAt(song: Song, bar: number): 0 | 1 | 2 {
+  const kind = sectionAt(song, bar)?.kind
+  if (kind === 'intro' || kind === 'outro') return 0
+  if (kind === 'chorus') return Math.min(2, song.density + 1) as 0 | 1 | 2
+  return song.density
 }
 
 export function songSteps(song: Song): number {
@@ -79,12 +105,18 @@ export function validateSong(raw: unknown): string | null {
   const s = raw as Partial<Song>
   if (s.version !== 1) return 'Phiên bản file không được hỗ trợ.'
   if (typeof s.bpm !== 'number' || s.bpm < 40 || s.bpm > 220) return 'Tempo phải trong khoảng 40–220 BPM.'
-  if (typeof s.bars !== 'number' || s.bars < 1 || s.bars > 64) return 'Số ô nhịp không hợp lệ.'
+  if (typeof s.bars !== 'number' || s.bars < 1 || s.bars > 128) return 'Số ô nhịp không hợp lệ.'
   if (!Array.isArray(s.chords) || s.chords.length !== s.bars) return 'Số hợp âm phải bằng số ô nhịp.'
   if (!Array.isArray(s.melody)) return 'Thiếu giai điệu.'
   for (const n of s.melody) {
     if (typeof n.pitch !== 'number' || typeof n.start !== 'number' || typeof n.dur !== 'number' || n.dur <= 0) {
       return 'Có nốt nhạc bị hỏng trong file.'
+    }
+  }
+  if (s.sections !== undefined) {
+    if (!Array.isArray(s.sections)) return 'Cấu trúc bài bị hỏng.'
+    for (const x of s.sections) {
+      if (!(x.kind in SECTION_LABEL) || x.start < 0 || x.bars < 1 || x.start + x.bars > s.bars) return 'Cấu trúc bài bị hỏng.'
     }
   }
   if (!s.tracks || !s.tracks.melody || !s.tracks.chords || !s.tracks.bass || !s.tracks.drums) return 'Thiếu thông tin track.'

@@ -5,6 +5,8 @@ Web app giúp người không biết nhạc lý vẫn sáng tác được: **ng�
 ## Tính năng
 
 - **Ngân nga thành giai điệu** (phần Data Science chính): thu bằng micro hoặc tải file lên, có đếm nhịp trước khi thu. Máy trả về nốt, giọng, tempo, độ tin cậy và hình các nốt thô nó nghe được.
+- **Ngân từng đoạn rồi ghép**: mỗi lần ngân có thể ghép nối tiếp vào sau đoạn trước. Máy tự dịch về đúng giọng của bài nếu bạn ngân lệch.
+- **Hoàn thiện thành bài**: chọn độ dài mong muốn (1 lượt, khoảng 2, 3, 4 hoặc 5 phút), máy thêm dạo đầu, điệp khúc (đệm dày hơn, có riser dẫn vào), lặp lại các đoạn và kết về chủ âm. Bài dài tối đa 128 ô nhịp.
 - **8 cảm xúc** (Vui tươi, Buồn, Chill, Hùng tráng, Lãng mạn, Sôi động, Mơ màng, Dân gian): mỗi cảm xúc chọn sẵn giọng, tempo, vòng hợp âm, nhạc cụ, kiểu đệm và trống.
 - **Hợp âm có màu theo cảm giác** (Ổn định / Chuyển động / Căng): khi đổi, gợi ý hợp âm hợp với giai điệu. Có nút "Hợp âm theo giai điệu" (thuật toán Viterbi).
 - **Tạo giai điệu tự động**: 3 phương án, Viết tiếp, Biến tấu, Cao hơn/Thấp hơn.
@@ -94,9 +96,9 @@ Image cũng chạy được ở nơi khác hỗ trợ Docker (Railway, Fly.io, H
 | `CORS_ORIGINS` | (trống) | Chỉ cần khi frontend nằm ở domain khác, ngăn cách bằng dấu phẩy |
 | `WARMUP` | `1` | Chạy nhận nốt thử khi khởi động để lần đầu người dùng không phải chờ biên dịch |
 
-## Đánh giá mô hình nhận nốt
+## Dành cho nhà phát triển: đo độ chính xác nhận nốt (không bắt buộc)
 
-Script `backend/scripts/eval_humtrans.py` đo note F1 (onset ±50 ms, cao độ ±50 cent, theo `mir_eval`) trên dataset có nhãn MIDI như HumTrans, và dò lưới tham số tách nốt.
+App chạy bình thường mà không cần bước này. Script `backend/scripts/eval_humtrans.py` đo note F1 (onset ±50 ms, cao độ ±50 cent, theo `mir_eval`) trên dataset có nhãn MIDI như HumTrans, và dò lưới tham số tách nốt.
 
 ```bash
 cd backend

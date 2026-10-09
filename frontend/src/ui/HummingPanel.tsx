@@ -14,7 +14,10 @@ type Props = {
   song: Song
   serverOk: boolean | null
   projectId?: string
+  /** Bài đã có giai điệu và còn chỗ: cho ghép đoạn ngân mới nối tiếp. */
+  canAppend: boolean
   onApply: (result: HummingResult, opts: ApplyOptions) => void
+  onAppend: (result: HummingResult, opts: { autoHarmony: boolean }) => void
 }
 
 const MODE_VI: Record<string, string> = { major: 'trưởng', minor: 'thứ' }
@@ -45,7 +48,7 @@ function RawNotes({ result }: { result: HummingResult }) {
   )
 }
 
-export function HummingPanel({ song, serverOk, projectId, onApply }: Props) {
+export function HummingPanel({ song, serverOk, projectId, canAppend, onApply, onAppend }: Props) {
   const [phase, setPhase] = useState<Phase>('idle')
   const [countIn, setCountIn] = useState(true)
   const [beat, setBeat] = useState(0)
@@ -57,6 +60,7 @@ export function HummingPanel({ song, serverOk, projectId, onApply }: Props) {
   const [useKey, setUseKey] = useState(true)
   const [useBpm, setUseBpm] = useState(true)
   const [autoHarmony, setAutoHarmony] = useState(true)
+  const [how, setHow] = useState<'append' | 'replace'>('replace')
 
   const ctxRef = useRef<AudioContext | null>(null)
   const recRef = useRef<MicRecorder | null>(null)
@@ -103,6 +107,7 @@ export function HummingPanel({ song, serverOk, projectId, onApply }: Props) {
     setResult(null)
     try {
       const r = await api.transcribe(t.blob, t.filename, { bpm: t.fixedBpm ? songRef.current.bpm : undefined, projectId })
+      setHow(canAppend ? 'append' : 'replace')
       if (!r.melody.length) setError('Không nhận ra nốt nào. Hãy ngân to, rõ, mỗi nốt một tiếng “đa” hoặc “la”, để micro gần hơn.')
       setResult(r)
     } catch (e) {
@@ -252,7 +257,26 @@ export function HummingPanel({ song, serverOk, projectId, onApply }: Props) {
             {(result.elapsed_ms / 1000).toFixed(1)} giây.
           </p>
           <RawNotes result={result} />
+          {song.melody.length > 0 && (
+            <div className="seg hum-how" role="group" aria-label="Cách dùng bản ngân">
+              <button className={how === 'append' ? 'on' : ''} onClick={() => setHow('append')} disabled={!canAppend}>
+                Ghép tiếp sau đoạn trước
+              </button>
+              <button className={how === 'replace' ? 'on' : ''} onClick={() => setHow('replace')}>
+                Thay toàn bộ giai điệu
+              </button>
+            </div>
+          )}
+          {song.melody.length > 0 && !canAppend && (
+            <p className="muted-text">
+              {song.sections ? 'Bài đã hoàn thiện nên không ghép thêm được. Bấm Hoàn tác để bỏ bước hoàn thiện rồi ghép tiếp.' : 'Bài đã đủ dài (128 ô nhịp).'}
+            </p>
+          )}
           <div className="hum-opts">
+            {how === 'append' && song.melody.length > 0 ? (
+              <span className="muted-text">Đoạn mới giữ giọng {NOTE_NAMES[song.tonic]} và tempo {song.bpm} BPM của bài, tự dịch cho khớp nếu bạn ngân lệch giọng.</span>
+            ) : (
+              <>
             <label className="check">
               <input type="checkbox" checked={useKey || sameKey} disabled={sameKey} onChange={(e) => setUseKey(e.target.checked)} />
               {sameKey ? `Giọng khớp với bài (${keyLabel})` : `Đổi bài sang giọng ${keyLabel} (bỏ chọn để giữ giọng ${NOTE_NAMES[song.tonic]} hiện tại)`}
@@ -261,15 +285,35 @@ export function HummingPanel({ song, serverOk, projectId, onApply }: Props) {
               <input type="checkbox" checked={useBpm && !sameBpm} disabled={sameBpm} onChange={(e) => setUseBpm(e.target.checked)} />
               {sameBpm ? `Tempo khớp với bài (${song.bpm} BPM)` : `Đổi tempo thành ${Math.round(result.bpm)} BPM (đang là ${song.bpm})`}
             </label>
+              </>
+            )}
             <label className="check">
               <input type="checkbox" checked={autoHarmony} onChange={(e) => setAutoHarmony(e.target.checked)} />
               Tự chọn hợp âm hợp với giai điệu
             </label>
           </div>
           <div className="actions">
-            <button className="primary" onClick={() => onApply(result, { useKey, useBpm: useBpm && !sameBpm, autoHarmony })}>
-              ✨ Dùng làm giai điệu và phối thành bài
-            </button>
+            {how === 'append' && song.melody.length > 0 ? (
+              <button
+                className="primary"
+                onClick={() => {
+                  onAppend(result, { autoHarmony })
+                  setResult(null)
+                }}
+              >
+                ➕ Ghép đoạn này vào bài
+              </button>
+            ) : (
+              <button
+                className="primary"
+                onClick={() => {
+                  onApply(result, { useKey, useBpm: useBpm && !sameBpm, autoHarmony })
+                  setResult(null)
+                }}
+              >
+                ✨ Dùng làm giai điệu và phối thành bài
+              </button>
+            )}
           </div>
         </div>
       )}

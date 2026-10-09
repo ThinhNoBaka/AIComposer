@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import type { Song } from '../core/song'
+import { SECTION_LABEL, sectionAt, type Song } from '../core/song'
 import { chordOptions } from '../core/suggest'
 import { FUNCTION_LABEL, chordFunction, chordName, type Chord } from '../core/theory'
 
@@ -44,6 +44,7 @@ export function ChordRow({ song, onSetChord, onPreviewChord }: Props) {
     <div className="chord-row" ref={rowRef}>
       {song.chords.map((c, bar) => {
         const fn = chordFunction(c.degree)
+        const sec = sectionAt(song, bar)
         return (
           <div key={bar} className="chord-slot">
             <button
@@ -55,7 +56,10 @@ export function ChordRow({ song, onSetChord, onPreviewChord }: Props) {
               aria-expanded={open === bar}
               aria-label={`Ô ${bar + 1}: hợp âm ${chordName(c, song.tonic, song.mode)}, ${FUNCTION_LABEL[fn]}. Bấm để nghe và đổi.`}
             >
-              <span className="chord-bar">Ô {bar + 1}</span>
+              <span className="chord-bar">
+                Ô {bar + 1}
+                {sec?.start === bar && <b className="chord-sec"> · {SECTION_LABEL[sec.kind]}</b>}
+              </span>
               <span className="chord-name">{chordName(c, song.tonic, song.mode)}</span>
               <span className="chord-fn">{FUNCTION_LABEL[fn]}</span>
             </button>

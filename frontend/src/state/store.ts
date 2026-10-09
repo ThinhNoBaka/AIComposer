@@ -29,6 +29,8 @@ export function applyMood(song: Song, moodId: string): Song {
     fx: song.fx,
     fxVolume: song.fxVolume,
     melody: remapMelody(song.melody, song, fresh),
+    // Bài đã hoàn thiện: giữ cấu trúc và vòng hợp âm (bậc hợp âm vẫn đúng ở giọng mới).
+    ...(song.sections ? { sections: song.sections, chords: song.chords } : {}),
   }
 }
 
