@@ -16,6 +16,8 @@ export type Note = {
   dur: number
   /** Lực đánh 1..127. */
   vel: number
+  /** Nốt đã khoá: máy không viết đè, không kéo/xoá được cho tới khi bỏ khoá. */
+  locked?: boolean
 }
 
 export type TrackId = 'melody' | 'chords' | 'bass' | 'drums'

@@ -4,6 +4,7 @@
 import { useEffect, useReducer } from 'react'
 import { NO_MOOD, emptySong, getMood, songFromMood } from '../core/moods'
 import { NO_CHORD } from '../core/theory'
+import { keepLockedNotes } from '../core/locks'
 import { remapMelody } from '../core/melody'
 import { validateSong, type Song } from '../core/song'
 
@@ -74,8 +75,12 @@ export function reducer(h: History, a: Action): History {
     }
   }
   switch (a.type) {
-    case 'update':
-      return commit(a.patch(h.present), a.coalesce ?? null)
+    case 'update': {
+      const next = a.patch(h.present)
+      // Nốt đã khoá luôn được giữ nguyên, bất kể thao tác nào vừa viết lại giai điệu.
+      const melody = keepLockedNotes(h.present.melody, next.melody)
+      return commit(melody === next.melody ? next : { ...next, melody }, a.coalesce ?? null)
+    }
     case 'mood':
       return commit(applyMood(h.present, a.moodId), null)
     case 'load':

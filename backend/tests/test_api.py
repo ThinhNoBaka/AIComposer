@@ -86,3 +86,34 @@ def test_timestamps_have_timezone(client):
     r = client.post("/api/projects", json={"title": "Giờ", "song": {"version": 1, "melody": [], "chords": []}}, headers=h)
     assert r.json()["updated_at"].endswith(("Z", "+00:00"))
     assert client.get("/api/projects", headers=h).json()[0]["updated_at"].endswith(("Z", "+00:00"))
+
+
+def test_project_revisions_and_restore(client):
+    pid = client.post("/api/projects", json={"title": "V", "song": {**SONG, "bpm": 80}}, headers=ALICE).json()["id"]
+    assert client.get(f"/api/projects/{pid}/revisions", headers=ALICE).json() == []
+    client.put(f"/api/projects/{pid}", json={"title": "V", "song": {**SONG, "bpm": 90}}, headers=ALICE)
+    client.put(f"/api/projects/{pid}", json={"title": "V", "song": {**SONG, "bpm": 90}}, headers=ALICE)  # không đổi: không thêm bản
+    client.put(f"/api/projects/{pid}", json={"title": "V2", "song": {**SONG, "bpm": 100}}, headers=ALICE)
+    revs = client.get(f"/api/projects/{pid}/revisions", headers=ALICE).json()
+    assert len(revs) == 2
+    assert client.get(f"/api/projects/{pid}/revisions", headers=BOB).status_code == 404
+    oldest = revs[-1]  # mới nhất trước: bản cuối danh sách là bản bpm 80 lưu lúc tạo bài
+    assert oldest["title"] == "V" and oldest["notes"] == 0 and oldest["bars"] == 1
+    r = client.post(f"/api/projects/{pid}/revisions/{oldest['id']}/restore", headers=ALICE)
+    assert r.status_code == 200 and r.json()["song"]["bpm"] == 80 and r.json()["title"] == "V"
+    # bản bpm 100 đang có trước khi khôi phục đã được giữ lại
+    revs = client.get(f"/api/projects/{pid}/revisions", headers=ALICE).json()
+    assert len(revs) == 3
+    assert client.post(f"/api/projects/{pid}/revisions/{oldest['id']}/restore", headers=BOB).status_code == 404
+    assert client.post(f"/api/projects/{pid}/revisions/khong-co/restore", headers=ALICE).status_code == 404
+    assert client.delete(f"/api/projects/{pid}", headers=ALICE).status_code == 204
+
+
+def test_revisions_are_capped(client, monkeypatch):
+    from app.routes import projects
+
+    monkeypatch.setattr(projects, "MAX_REVISIONS", 3)
+    pid = client.post("/api/projects", json={"title": "C", "song": SONG}, headers=ALICE).json()["id"]
+    for bpm in range(100, 106):
+        client.put(f"/api/projects/{pid}", json={"title": "C", "song": {**SONG, "bpm": bpm}}, headers=ALICE)
+    assert len(client.get(f"/api/projects/{pid}/revisions", headers=ALICE).json()) == 3

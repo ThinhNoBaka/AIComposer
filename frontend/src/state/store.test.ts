@@ -131,3 +131,18 @@ describe('khoá', () => {
     expect(next.lyrics).toBe('la la')
   })
 })
+
+describe('khoá từng nốt qua store', () => {
+  it('viết lại giai điệu vẫn giữ nốt đã khoá, undo bỏ được cả bước', () => {
+    let h = hist()
+    h = reducer(h, { type: 'update', patch: (s) => ({ ...s, melody: generateMelody(s, { seed: 1 }) }) })
+    const target = h.present.melody[2]
+    h = reducer(h, { type: 'update', patch: (s) => ({ ...s, melody: s.melody.map((x) => (x.id === target.id ? { ...x, locked: true } : x)) }) })
+    const locked = h.present.melody.find((x) => x.id === target.id)!
+    h = reducer(h, { type: 'update', patch: (s) => ({ ...s, melody: generateMelody(s, { seed: 99 }) }) })
+    expect(h.present.melody.find((x) => x.id === target.id)).toEqual(locked)
+    const end = locked.start + locked.dur
+    expect(h.present.melody.filter((x) => x.id !== target.id && x.start < end && locked.start < x.start + x.dur)).toHaveLength(0)
+    expect(validateSong(h.present)).toBeNull()
+  })
+})

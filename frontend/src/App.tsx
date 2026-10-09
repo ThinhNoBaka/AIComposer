@@ -9,12 +9,13 @@ import { continueMelody, generateMelody, shiftMelody, varyMelody } from './core/
 import { songToMidi } from './core/midi'
 import { midiToSong } from './core/midiImport'
 import { copyClip, deleteNotes, duplicateNotes, pasteClip, type Clip } from './core/edit'
+import { lockedCount, noteIdsInSection, setNotesLocked } from './core/locks'
 import { describe as describeCommand, parseCommand, type Command } from './core/commands'
 import { remapMelody } from './core/melody'
-import { MAX_BARS, SECTION_LABEL, STEPS_PER_BAR, stepSeconds, validateSong, type FxEvent, type Locks, type Note, type Song, type Track, type TrackId, type VocalTrack } from './core/song'
+import { MAX_BARS, SECTION_LABEL, STEPS_PER_BAR, sectionAt, stepSeconds, validateSong, type FxEvent, type Locks, type Note, type Song, type Track, type TrackId, type VocalTrack } from './core/song'
 import { varyArrangement } from './core/arrange'
 import { STEM_LABEL, soloSong, stemIds } from './core/stems'
-import { zipStore, type ZipEntry } from './core/zip'
+import { unzip, zipStore, type ZipEntry } from './core/zip'
 import {
   addRound,
   appendHumming,
@@ -349,6 +350,24 @@ export default function App() {
   const chordsLocked = !!locks.chords
   const lockedMsg = () => setMessage('Giai điệu đang khoá. Bỏ Khoá giai điệu trên thanh công cụ để sửa.')
 
+  // Khoá từng nốt: nốt đã chọn, hoặc cả đoạn chứa ô nhịp đang chọn.
+  const selLocked = selectedIds.size > 0 && [...selectedIds].every((id) => song.melody.find((n) => n.id === id)?.locked)
+  const toggleSelLock = () => {
+    if (!selectedIds.size) return
+    update((s) => ({ ...s, melody: setNotesLocked(s.melody, selectedIds, !selLocked) }))
+    setMessage(selLocked ? `Đã bỏ khoá ${selectedIds.size} nốt.` : `Đã khoá ${selectedIds.size} nốt: máy sẽ không viết đè lên chúng.`)
+  }
+  const barSection = selectedBar === null ? null : (sectionAt(song, selectedBar) ?? { kind: 'verse' as const, start: selectedBar, bars: 1 })
+  const barSectionIds = barSection ? noteIdsInSection(song.melody, barSection, STEPS_PER_BAR) : new Set<string>()
+  const barSectionLocked = barSectionIds.size > 0 && [...barSectionIds].every((id) => song.melody.find((n) => n.id === id)?.locked)
+  const barSectionName = !barSection ? '' : selectedBar !== null && sectionAt(song, selectedBar) ? `đoạn ${SECTION_LABEL[barSection.kind]}` : `ô ${barSection.start + 1}`
+  const toggleSectionLock = () => {
+    if (!barSectionIds.size) return
+    update((s) => ({ ...s, melody: setNotesLocked(s.melody, barSectionIds, !barSectionLocked) }))
+    setMessage(barSectionLocked ? `Đã bỏ khoá ${barSectionName}.` : `Đã khoá ${barSectionIds.size} nốt của ${barSectionName}.`)
+  }
+  const lockedNotes = lockedCount(song.melody)
+
   // ----- Chọn nhiều nốt, chép, dán -----
   const pasteAt = () => {
     const pos = player.position()
@@ -538,7 +557,17 @@ export default function App() {
   }
   const openJson = async (file: File) => {
     try {
-      const data = JSON.parse(await file.text())
+      let text: string
+      if (/\.zip$/i.test(file.name) || file.type.includes('zip')) {
+        // Gói trọn bài (.zip) do app xuất: lấy file .aicomposer.json bên trong.
+        const [entry] = await unzip(new Uint8Array(await file.arrayBuffer()), (n) => n.toLowerCase().endsWith('.aicomposer.json'))
+        if (!entry) {
+          setMessage('Không mở được: trong gói .zip không có file bài (.aicomposer.json).')
+          return
+        }
+        text = new TextDecoder().decode(entry.data)
+      } else text = await file.text()
+      const data = JSON.parse(text)
       const err = validateSong(data)
       if (err) {
         setMessage(`Không mở được: ${err}`)
@@ -549,8 +578,8 @@ export default function App() {
       setCloudId(null)
       setCandidates(null)
       setMessage(`Đã mở "${(data as Song).title}".`)
-    } catch {
-      setMessage('Không mở được: file không phải JSON hợp lệ.')
+    } catch (e) {
+      setMessage(`Không mở được: ${e instanceof SyntaxError ? 'file bài không phải JSON hợp lệ.' : e instanceof Error ? e.message : String(e)}`)
     }
   }
 
@@ -919,7 +948,7 @@ export default function App() {
             items={[
               { label: 'Bài của tôi trên cloud', onClick: () => setCloudOpen(true), disabled: !serverOk },
               { label: 'Lưu file về máy', hint: '.aicomposer.json', onClick: saveJson },
-              { label: 'Mở file từ máy', onClick: () => fileRef.current?.click() },
+              { label: 'Mở file từ máy', hint: '.aicomposer.json hoặc gói trọn bài .zip', onClick: () => fileRef.current?.click() },
               { label: 'Mở file MIDI', hint: '.mid, .kar: lấy giai điệu, hợp âm, lời', onClick: () => midiRef.current?.click() },
             ]}
           />
@@ -945,7 +974,7 @@ export default function App() {
           <input
             ref={fileRef}
             type="file"
-            accept=".json,application/json"
+            accept=".json,application/json,.zip,application/zip"
             hidden
             onChange={(e) => {
               const f = e.target.files?.[0]
@@ -1173,6 +1202,27 @@ export default function App() {
               >
                 Khoá giai điệu
               </button>
+              {selectedIds.size > 0 && (
+                <button
+                  className={`btn btn-sm btn-toggle${selLocked ? ' is-on' : ''}`}
+                  onClick={toggleSelLock}
+                  aria-pressed={selLocked}
+                  title="Khoá các nốt đang chọn: tạo, biến tấu, viết tiếp hay ngân đè đều giữ nguyên chúng"
+                >
+                  {selLocked ? 'Bỏ khoá nốt đã chọn' : 'Khoá nốt đã chọn'}
+                </button>
+              )}
+              {barSectionIds.size > 0 && (
+                <button
+                  className={`btn btn-sm btn-toggle${barSectionLocked ? ' is-on' : ''}`}
+                  onClick={toggleSectionLock}
+                  aria-pressed={barSectionLocked}
+                  title="Khoá mọi nốt trong đoạn (hoặc ô nhịp) đang chọn trên thước"
+                >
+                  {barSectionLocked ? `Bỏ khoá ${barSectionName}` : `Khoá ${barSectionName}`}
+                </button>
+              )}
+              {lockedNotes > 0 && <span className="hint">{lockedNotes} nốt đang khoá</span>}
               <button
                 className={`btn btn-sm btn-toggle${chordsLocked ? ' is-on' : ''}`}
                 onClick={() => setLock('chords', !chordsLocked)}

@@ -58,6 +58,7 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
 
 export type ProjectSummary = { id: string; title: string; updated_at: string }
 export type ProjectFull = ProjectSummary & { song: Song; created_at: string }
+export type RevisionSummary = { id: string; title: string; created_at: string; notes: number; bars: number }
 
 export const api = {
   health: () => request<{ ok: boolean; database: string }>('/api/health'),
@@ -68,6 +69,8 @@ export const api = {
   updateProject: (id: string, song: Song) =>
     request<ProjectFull>(`/api/projects/${id}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ title: song.title, song }) }),
   deleteProject: (id: string) => request<void>(`/api/projects/${id}`, { method: 'DELETE' }),
+  listRevisions: (id: string) => request<RevisionSummary[]>(`/api/projects/${id}/revisions`),
+  restoreRevision: (id: string, rid: string) => request<ProjectFull>(`/api/projects/${id}/revisions/${rid}/restore`, { method: 'POST' }),
   transcribe: (audio: Blob, filename: string, opts: { bpm?: number; tonic?: number; mode?: Mode; projectId?: string }) => {
     const fd = new FormData()
     fd.append('audio', audio, filename)
