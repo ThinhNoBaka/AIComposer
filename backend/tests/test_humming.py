@@ -7,7 +7,7 @@ from app.humming.notes import segment_notes
 from app.humming.pipeline import TranscribeOptions, transcribe_array, transcribe_bytes
 from app.humming.pitch import track_pitch
 from app.humming.quantize import estimate_bpm, quantize
-from app.humming.synth import synth_hum, to_wav_bytes
+from app.humming.synth import synth_hum, synth_hum_natural, to_wav_bytes
 
 SR = 16000
 
@@ -133,3 +133,24 @@ def test_scores_perfect_and_empty():
     ref = melody_seconds([60, 62, 64], 100)
     assert note_scores(ref, ref)["f1"] == 1.0
     assert note_scores(ref, [])["f1"] == 0.0
+
+
+@pytest.mark.parametrize("tuning,drift,seed", [(45, -60, 0), (-40, -50, 1), (20, 40, 2), (-48, 0, 3)])
+def test_off_tune_legato_humming_keeps_intervals(tuning, drift, seed):
+    """Người ngân lệch chuẩn ~một phần tư cung, trôi dần và luyến liền: các quãng giữa nốt vẫn phải đúng."""
+    ref = melody_seconds(TUNE, 100, TUNE_BEATS, gap=0.0)
+    y = synth_hum_natural(ref, SR, tuning_cents=tuning, drift_cents=drift, seed=seed)
+    res = transcribe_array(y, SR, TranscribeOptions(bpm=100))
+    got = [m["pitch"] for m in res["melody"]]
+    assert len(got) == len(TUNE), got
+    shift = got[0] - TUNE[0]
+    wrong = sum(g - shift != t for g, t in zip(got, TUNE))
+    assert wrong <= 1, (got, res["tuning_cents"])
+
+
+def test_semitone_step_sung_legato_is_split():
+    """Mi→Fa luyến liền (bước nửa cung, không nghỉ) phải ra hai nốt, không gộp thành một."""
+    ref = melody_seconds([64, 65, 64, 65], 90, gap=0.0)
+    y = synth_hum_natural(ref, SR, tuning_cents=30, drift_cents=0, seed=7)
+    notes = segment_notes(track_pitch(y, SR))
+    assert len(notes) == 4, [(round(n.onset, 2), round(n.pitch, 2)) for n in notes]

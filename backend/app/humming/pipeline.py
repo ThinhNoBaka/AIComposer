@@ -11,6 +11,7 @@ from .keys import detect_key, snap_to_scale
 from .notes import NoteEvent, SegmentParams, segment_notes
 from .pitch import track_pitch
 from .quantize import STEPS_PER_BAR, estimate_bpm, octave_shift, quantize
+from .tuning import retune
 
 MAX_SECONDS = 60
 
@@ -31,7 +32,12 @@ def transcribe_array(y: np.ndarray, sr: int, opts: TranscribeOptions | None = No
     peak = float(np.max(np.abs(y))) if len(y) else 0.0
     if peak > 0:
         y = y / peak * 0.9  # chuẩn hoá âm lượng để ngưỡng năng lượng ổn định
-    raw = segment_notes(track_pitch(y, sr), params) if peak > 0.01 else []
+    raw: list[NoteEvent] = []
+    tuning_cents = 0.0
+    if peak > 0.01:
+        track = track_pitch(y, sr)
+        # Bù lệch chuẩn của người ngân trước khi dò giọng và làm tròn nốt.
+        raw, tuning_cents = retune(segment_notes(track, params), track)
 
     weights = [n.offset - n.onset for n in raw]
     if o.tonic is not None and o.mode:
@@ -60,6 +66,7 @@ def transcribe_array(y: np.ndarray, sr: int, opts: TranscribeOptions | None = No
         "key_confidence": round(float(conf), 3),
         "bars": bars,
         "octave_shift": shift,
+        "tuning_cents": tuning_cents,
         "duration_sec": round(len(y) / sr, 2),
         "melody": melody,
         "raw_notes": [{"onset": round(n.onset, 3), "offset": round(n.offset, 3), "pitch": round(n.pitch, 2)} for n in raw],
