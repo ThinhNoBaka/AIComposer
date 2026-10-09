@@ -20,7 +20,9 @@ COPY backend/requirements.txt .
 RUN pip install -r requirements.txt
 COPY backend/app ./app
 COPY --from=web /web/dist ./static
-RUN useradd --create-home --uid 1000 app
+# Không đặt DATABASE_URL thì dùng SQLite trong /app/data (thư mục user app ghi được). Deploy thật thì đặt DATABASE_URL tới PostgreSQL.
+ENV DATABASE_URL=sqlite:////app/data/aicomposer.db
+RUN useradd --create-home --uid 1000 app && mkdir -p /app/data && chown app /app/data
 USER app
 EXPOSE 8000
 HEALTHCHECK --interval=30s --timeout=5s --start-period=20s CMD python -c "import os,urllib.request; urllib.request.urlopen(f'http://127.0.0.1:{os.environ.get(\"PORT\",\"8000\")}/api/health', timeout=4)"
