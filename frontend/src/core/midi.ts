@@ -2,9 +2,15 @@ import { Midi } from '@tonejs/midi'
 import { GM_DRUM_NOTE } from './accompany'
 import { buildEvents } from './events'
 import { gmProgram } from './instruments'
+import { alignLyrics, parseLyrics } from './lyrics'
 import type { Song } from './song'
 
-/** Xuất bài ra file MIDI chuẩn: 3 track nhạc cụ + track trống kênh 10. Hiệu ứng FX không có trong MIDI. */
+/** midi-file ghi mỗi ký tự thành một byte: đổi chữ có dấu sang chuỗi byte UTF-8 trước. */
+function utf8Bytes(text: string): string {
+  return String.fromCharCode(...new TextEncoder().encode(text))
+}
+
+/** Xuất bài ra file MIDI chuẩn: 3 track nhạc cụ + track trống kênh 10, kèm lời (sự kiện lyric) nếu có. Hiệu ứng FX không có trong MIDI. */
 export function songToMidi(song: Song): Uint8Array {
   const midi = new Midi()
   midi.header.setTempo(song.bpm)
@@ -43,6 +49,14 @@ export function songToMidi(song: Song): Uint8Array {
         velocity: (e.vel / 127) * song.tracks.drums.volume,
       })
     }
+  }
+  if (song.lyrics?.trim()) {
+    const al = alignLyrics(parseLyrics(song.lyrics), song.melody)
+    for (const n of song.melody) {
+      const syl = al.syllableOf.get(n.id)
+      if (syl && syl !== '–') midi.header.meta.push({ type: 'lyrics', text: utf8Bytes(syl), ticks: Math.round(n.start * ticksPerStep) })
+    }
+    midi.header.meta.sort((a, b) => a.ticks - b.ticks)
   }
   return midi.toArray()
 }

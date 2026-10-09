@@ -7,17 +7,34 @@ import type { LoadState } from './audio/voices'
 import { MOODS, getMood, progressionToChords } from './core/moods'
 import { continueMelody, generateMelody, shiftMelody, varyMelody } from './core/melody'
 import { songToMidi } from './core/midi'
-import { SECTION_LABEL, STEPS_PER_BAR, validateSong, type Note, type Song, type Track, type TrackId } from './core/song'
-import { appendHumming, applyHumming, arrangeSong, canAppend, formatDuration, melodyEndBar, resizeSong, songSeconds, type ApplyOptions } from './core/humming'
+import { MAX_BARS, SECTION_LABEL, STEPS_PER_BAR, stepSeconds, validateSong, type FxEvent, type Note, type Song, type Track, type TrackId } from './core/song'
+import {
+  addRound,
+  appendHumming,
+  applyHumming,
+  arrangeSong,
+  canAppend,
+  contentEndBar,
+  extendSong,
+  formatDuration,
+  melodyEndBar,
+  resizeSong,
+  songSeconds,
+  type ApplyOptions,
+} from './core/humming'
+import { alignLyrics, fixToneHint, lyricsFile, melodyFromLyrics, parseLyrics, splitNotesForLyrics, type ToneHint } from './core/lyrics'
 import { harmonize } from './core/suggest'
 import { chordPitches, degreeToMidi, midiToDegree, snapToScale, NOTE_NAMES, type Chord } from './core/theory'
 import { useSongStore } from './state/store'
-import { ChordRow } from './ui/ChordRow'
+import { ChordInspector } from './ui/ChordInspector'
 import { CloudList } from './ui/CloudList'
 import { FxPanel } from './ui/FxPanel'
 import { HummingPanel } from './ui/HummingPanel'
+import { LyricsPanel } from './ui/LyricsPanel'
+import { Menu } from './ui/Menu'
 import { Mixer } from './ui/Mixer'
-import { PianoRoll, ROLL_GEOMETRY } from './ui/PianoRoll'
+import { LABEL_W, ZOOMS } from './ui/geometry'
+import { Timeline } from './ui/Timeline'
 
 const MODE_LABEL: Record<Song['mode'], string> = {
   major: 'trưởng',
@@ -26,6 +43,14 @@ const MODE_LABEL: Record<Song['mode'], string> = {
   majorPentatonic: 'ngũ cung trưởng',
   minorPentatonic: 'ngũ cung thứ',
 }
+
+type Tab = 'start' | 'lyrics' | 'mixer' | 'fx'
+const TABS: { id: Tab; label: string }[] = [
+  { id: 'start', label: 'Bắt đầu' },
+  { id: 'lyrics', label: 'Lời' },
+  { id: 'mixer', label: 'Nhạc cụ' },
+  { id: 'fx', label: 'Hiệu ứng' },
+]
 
 function download(blob: Blob, name: string) {
   const url = URL.createObjectURL(blob)
@@ -44,14 +69,12 @@ function safeName(title: string) {
 
 const randomSeed = () => Math.floor(Math.random() * 1e9)
 
-const BAR_OPTIONS = [4, 8, 16, 32, 48, 64, 96, 128]
-const TARGETS = [
-  { sec: 0, label: 'Ngắn gọn (1 lượt)' },
-  { sec: 120, label: 'Khoảng 2 phút' },
-  { sec: 180, label: 'Khoảng 3 phút' },
-  { sec: 240, label: 'Khoảng 4 phút' },
-  { sec: 300, label: 'Khoảng 5 phút' },
-]
+/** Bài đủ dài để chứa mọi nốt và hiệu ứng: đặt nốt vào vùng trống cuối timeline là bài tự dài ra. */
+function fitContent(s: Song): Song {
+  const noteEnd = s.melody.reduce((m, n) => Math.max(m, n.start + n.dur), 0)
+  const fxEnd = s.fx.reduce((m, f) => Math.max(m, f.start + 1), 0)
+  return extendSong(s, Math.ceil(Math.max(noteEnd, fxEnd) / STEPS_PER_BAR))
+}
 
 const CLOUD_ID_KEY = 'aicomposer.cloudId'
 function readCloudId(): string | null {
@@ -70,6 +93,28 @@ function writeCloudId(id: string | null) {
   }
 }
 
+function BpmField({ bpm, onChange }: { bpm: number; onChange: (v: number) => void }) {
+  const [draft, setDraft] = useState<string | null>(null)
+  const commit = () => {
+    const v = Math.round(Number(draft))
+    if (draft !== null && v >= 50 && v <= 180) onChange(v)
+    setDraft(null)
+  }
+  return (
+    <label className="lcd lcd-field" title="Tempo (50 đến 180)">
+      <input
+        inputMode="numeric"
+        value={draft ?? String(bpm)}
+        onChange={(e) => setDraft(e.target.value.replace(/[^0-9]/g, '').slice(0, 3))}
+        onBlur={commit}
+        onKeyDown={(e) => e.key === 'Enter' && (e.target as HTMLInputElement).blur()}
+        aria-label="Tempo, nhịp mỗi phút"
+      />
+      <span>BPM</span>
+    </label>
+  )
+}
+
 export default function App() {
   const { history, dispatch } = useSongStore()
   const song = history.present
@@ -81,6 +126,11 @@ export default function App() {
   const [status, setStatus] = useState<Record<TrackId, LoadState> | null>(null)
   const [lockScale, setLockScale] = useState(true)
   const [grid, setGrid] = useState(2)
+  const [zoom, setZoom] = useState(2)
+  const [tab, setTab] = useState<Tab>('start')
+  const [selectedRaw, setSelectedBar] = useState<number | null>(null)
+  const [fxSelected, setFxSelected] = useState('riser')
+  const [cursorRaw, setCursor] = useState(0)
   const [candidates, setCandidates] = useState<{ seeds: number[]; active: number } | null>(null)
   const [busy, setBusy] = useState<string | null>(null)
   const [message, setMessage] = useState<string | null>(null)
@@ -89,18 +139,32 @@ export default function App() {
   const [cloudId, setCloudIdState] = useState<string | null>(readCloudId)
   const [cloudOpen, setCloudOpen] = useState(false)
   const [saving, setSaving] = useState(false)
-  const [targetSec, setTargetSec] = useState(180)
-  const playheadRef = useRef<HTMLDivElement>(null)
+  const gridRef = useRef<HTMLDivElement>(null)
+  const scrollRef = useRef<HTMLDivElement>(null)
+  const timeRef = useRef<HTMLSpanElement>(null)
   const fileRef = useRef<HTMLInputElement>(null)
+  const stepW = ZOOMS[zoom]
+  // Bài ngắn lại (hoàn tác, mở bài khác) thì chỗ bắt đầu phát và ô đang chọn quay về trong bài.
+  const cursor = cursorRaw < song.bars * STEPS_PER_BAR ? cursorRaw : 0
+  const selectedBar = selectedRaw !== null && selectedRaw < song.bars ? selectedRaw : null
+  const stepWRef = useRef(stepW)
+  stepWRef.current = stepW
 
   const update = useCallback((patch: (s: Song) => Song, coalesce?: string) => dispatch({ type: 'update', patch, coalesce }), [dispatch])
-  const setMelody = useCallback((notes: Note[], coalesce?: string) => update((s) => ({ ...s, melody: notes }), coalesce), [update])
   const setField = useCallback((patch: Partial<Song>, coalesce?: string) => update((s) => ({ ...s, ...patch }), coalesce), [update])
   const setTrack = useCallback(
     (id: TrackId, patch: Partial<Track>, coalesce?: string) =>
       update((s) => ({ ...s, tracks: { ...s.tracks, [id]: { ...s.tracks[id], ...patch } } }), coalesce),
     [update],
   )
+  const setMelody = useCallback((notes: Note[], coalesce?: string) => update((s) => fitContent({ ...s, melody: notes }), coalesce), [update])
+  const setFx = useCallback((fx: FxEvent[]) => update((s) => fitContent({ ...s, fx })), [update])
+
+  // ----- Lời -----
+  const lyricsText = song.lyrics ?? ''
+  const lines = useMemo(() => parseLyrics(lyricsText), [lyricsText])
+  const alignment = useMemo(() => alignLyrics(lines, song.melody), [lines, song.melody])
+  const hintIds = useMemo(() => new Set(alignment.hints.map((h) => h.noteId)), [alignment])
 
   // Đồng bộ nhạc cụ, âm lượng với bộ phát mỗi khi bài đổi.
   useEffect(() => {
@@ -108,19 +172,27 @@ export default function App() {
     player.sync(song)
   }, [player, song])
 
-  // Vạch chạy trên piano roll.
+  // Vạch chạy, đồng hồ, và tự cuộn timeline theo vạch chạy.
   useEffect(() => {
     if (!playing) {
-      if (playheadRef.current) playheadRef.current.style.display = 'none'
+      gridRef.current?.classList.remove('is-playing')
       return
     }
     let raf = 0
     const loop = () => {
       const pos = player.position()
-      const el = playheadRef.current
-      if (el && pos !== null) {
-        el.style.display = 'block'
-        el.style.transform = `translateX(${pos * ROLL_GEOMETRY.STEP_W}px)`
+      const g = gridRef.current
+      const sc = scrollRef.current
+      if (g && pos !== null) {
+        const x = pos * stepWRef.current
+        g.classList.add('is-playing')
+        g.style.setProperty('--ph', `${x}px`)
+        if (timeRef.current) timeRef.current.textContent = formatDuration(pos * stepSeconds(songRef.current.bpm))
+        if (sc) {
+          const left = sc.scrollLeft
+          const view = sc.clientWidth - LABEL_W
+          if (x < left || x > left + view - 40) sc.scrollLeft = Math.max(0, x - 40)
+        }
       }
       raf = requestAnimationFrame(loop)
     }
@@ -142,16 +214,39 @@ export default function App() {
     writeCloudId(id)
   }
 
-  const togglePlay = useCallback(async () => {
-    if (player.playing) {
-      player.stop()
-      setPlaying(false)
-    } else {
-      await player.play(() => songRef.current)
+  const startAt = useCallback(
+    async (step: number) => {
+      await player.play(() => songRef.current, step)
       setStatus(player.voices?.status() ?? null)
       setPlaying(true)
-    }
+    },
+    [player],
+  )
+
+  const stop = useCallback(() => {
+    player.stop()
+    setPlaying(false)
   }, [player])
+
+  const togglePlay = useCallback(async () => {
+    if (player.playing) stop()
+    else await startAt(cursor)
+  }, [player, stop, startAt, cursor])
+
+  const seek = useCallback(
+    (step: number) => {
+      setCursor(step)
+      if (timeRef.current) timeRef.current.textContent = formatDuration(step * stepSeconds(songRef.current.bpm))
+      if (player.playing) void startAt(step)
+    },
+    [player, startAt],
+  )
+
+  const restart = () => {
+    if (player.playing) stop()
+    void startAt(0)
+    setCursor(0)
+  }
 
   const previewNote = useCallback(
     async (pitch: number, track: 'melody' | 'chords' | 'bass' = 'melody', dur = 0.45) => {
@@ -194,21 +289,32 @@ export default function App() {
     [player],
   )
 
+  const previewFx = async (id: string) => {
+    const v = await player.ensure()
+    v.setVolumes(songRef.current)
+    await v.prepareFx([id])
+    v.fx(id, player.context!.currentTime + 0.02)
+  }
+
   // ----- Giai điệu -----
   const makeCandidates = () => {
     const base = randomSeed()
     const seeds = [base, base + 1, base + 2]
     setCandidates({ seeds, active: 0 })
     update((s) => ({ ...s, seed: base, melody: generateMelody(s, { seed: base }) }), 'candidates')
-    if (!player.playing) void togglePlay()
+    if (!player.playing) void startAt(cursor)
   }
   const pickCandidate = (i: number) => {
     if (!candidates) return
     setCandidates({ ...candidates, active: i })
     update((s) => ({ ...s, seed: candidates.seeds[i], melody: generateMelody(s, { seed: candidates.seeds[i] }) }), 'candidates')
   }
-  const melodyEnd = song.melody.length ? Math.max(...song.melody.map((n) => n.start + n.dur)) : 0
-  const canContinue = song.melody.length > 0 && Math.ceil(melodyEnd / STEPS_PER_BAR) < song.bars
+  // Viết tiếp: giai điệu đã kín bài thì nối thêm 4 ô rồi viết vào đó.
+  const continueAction = () =>
+    update((s) => {
+      const base = melodyEndBar(s) >= s.bars ? extendSong(s, s.bars + 4) : s
+      return { ...base, melody: continueMelody(base, randomSeed()) }
+    })
 
   // ----- Hợp âm -----
   const nextProgression = () => {
@@ -227,6 +333,9 @@ export default function App() {
       setMessage('Đã đưa các nốt lạc về thang âm. Bấm Hoàn tác nếu muốn giữ như cũ.')
     }
   }
+
+  const contentEnd = contentEndBar(song)
+  const trimEnd = () => update((s) => ({ ...s, bars: contentEndBar(s), chords: s.chords.slice(0, contentEndBar(s)) }))
 
   // ----- Xuất / lưu -----
   const exportMidi = () => {
@@ -251,6 +360,9 @@ export default function App() {
       setBusy(null)
     }
   }
+  const exportLyrics = () => {
+    download(new Blob([lyricsFile(song.title, lyricsText)], { type: 'text/plain;charset=utf-8' }), `${safeName(song.title)} - loi.txt`)
+  }
   const saveJson = () => {
     download(new Blob([JSON.stringify(song, null, 2)], { type: 'application/json' }), `${safeName(song.title)}.aicomposer.json`)
   }
@@ -262,6 +374,7 @@ export default function App() {
         setMessage(`Không mở được: ${err}`)
         return
       }
+      stop()
       dispatch({ type: 'load', song: data as Song })
       setCloudId(null)
       setCandidates(null)
@@ -287,13 +400,6 @@ export default function App() {
     }
   }
 
-  const previewFx = async (id: string) => {
-    const v = await player.ensure()
-    v.setVolumes(songRef.current)
-    await v.prepareFx([id])
-    v.fx(id, player.context!.currentTime + 0.02)
-  }
-
   // ----- Ngân nga -> bài -----
   const applyHum = (r: HummingResult, opts: ApplyOptions) => {
     const { song: next, dropped } = applyHumming(songRef.current, r, opts)
@@ -301,10 +407,11 @@ export default function App() {
     setCandidates(null)
     setMessage(
       `Đã đưa ${next.melody.length} nốt vào bài${opts.autoHarmony ? ' và chọn hợp âm theo giai điệu' : ''}.` +
-        (dropped ? ` Bỏ ${dropped} nốt vượt quá 128 ô nhịp.` : '') +
+        (dropped ? ` Bỏ ${dropped} nốt vượt quá ${MAX_BARS} ô nhịp.` : '') +
         ' Bấm Hoàn tác nếu chưa ưng.',
     )
-    if (!player.playing) void togglePlay()
+    void startAt(0)
+    setCursor(0)
   }
 
   const appendHum = (r: HummingResult, opts: { autoHarmony: boolean }) => {
@@ -312,17 +419,52 @@ export default function App() {
     const added = next.melody.length - songRef.current.melody.length
     update(() => next)
     setCandidates(null)
-    setMessage(`Đã ghép ${added} nốt vào sau, bài giờ dài ${next.bars} ô nhịp.` + (dropped ? ` Bỏ ${dropped} nốt vượt quá 128 ô.` : '') + ' Ngân tiếp đoạn nữa hoặc bấm Hoàn thiện thành bài.')
+    setMessage(`Đã ghép ${added} nốt vào sau, bài giờ dài ${next.bars} ô nhịp.` + (dropped ? ` Bỏ ${dropped} nốt vượt quá ${MAX_BARS} ô.` : '') + ' Ngân tiếp đoạn nữa hoặc bấm Hoàn thiện thành bài.')
+  }
+
+  const replay = () => {
+    stop()
+    setCursor(0)
+    void startAt(0)
   }
 
   const arrange = () => {
-    const next = arrangeSong(songRef.current, randomSeed(), targetSec)
+    const next = arrangeSong(songRef.current, randomSeed())
     update(() => next)
     setCandidates(null)
-    setMessage(`Đã hoàn thiện thành bài dài ${formatDuration(songSeconds(next))} (${next.bars} ô nhịp). Bấm Hoàn tác nếu muốn quay lại.`)
-    if (player.playing) player.stop()
-    setPlaying(false)
-    void player.play(() => songRef.current).then(() => setPlaying(true))
+    setMessage(`Đã hoàn thiện thành bài dài ${formatDuration(songSeconds(next))}. Muốn dài hơn: thêm lượt đoạn chính và điệp khúc, hoặc viết tiếp vào vùng trống cuối timeline.`)
+    replay()
+  }
+
+  const moreRound = () => {
+    const next = addRound(songRef.current, randomSeed())
+    if (!next) {
+      setMessage(`Không thêm được: bài đã gần ${MAX_BARS} ô nhịp.`)
+      return
+    }
+    update(() => next)
+    setMessage(`Đã thêm một lượt đoạn chính và điệp khúc, bài giờ dài ${formatDuration(songSeconds(next))}.`)
+  }
+
+  // ----- Lời -> nhạc -----
+  const writeFromLyrics = () => {
+    update((s) => {
+      const { melody, bars } = melodyFromLyrics(s, lines, randomSeed())
+      const sized = { ...resizeSong(s, Math.max(4, Math.ceil(bars / 4) * 4)), melody }
+      return { ...sized, chords: harmonize(sized) }
+    })
+    setCandidates(null)
+    setMessage('Đã viết giai điệu theo lời và chọn hợp âm hợp với nó. Bấm lại để thử phương án khác, hoặc Hoàn tác.')
+    replay()
+  }
+  const splitForLyrics = () => {
+    const { melody, added } = splitNotesForLyrics(songRef.current, lines)
+    update((s) => ({ ...s, melody }))
+    setMessage(`Đã chẻ ${added} nốt để đủ chỗ cho chữ.`)
+  }
+  const fixHint = (h: ToneHint) => {
+    update((s) => ({ ...s, melody: fixToneHint(s, h) }))
+    void previewNote(fixToneHint(songRef.current, h).find((n) => n.id === h.noteId)?.pitch ?? h.prevPitch)
   }
 
   // ----- Cloud -----
@@ -353,10 +495,7 @@ export default function App() {
         setMessage(`Không mở được: ${err}`)
         return
       }
-      if (player.playing) {
-        player.stop()
-        setPlaying(false)
-      }
+      stop()
       dispatch({ type: 'load', song: p.song })
       setCloudId(p.id)
       setCandidates(null)
@@ -367,7 +506,7 @@ export default function App() {
     }
   }
 
-  // Phím tắt: Space phát/dừng, Ctrl+Z hoàn tác, Ctrl+Y / Ctrl+Shift+Z làm lại.
+  // Phím tắt: Space phát/dừng, Home về đầu, Ctrl+Z hoàn tác, Ctrl+Y / Ctrl+Shift+Z làm lại.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       const tag = (e.target as HTMLElement).tagName
@@ -375,6 +514,9 @@ export default function App() {
       if (e.code === 'Space') {
         e.preventDefault()
         void togglePlay()
+      } else if (e.key === 'Home') {
+        e.preventDefault()
+        seek(0)
       } else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'z') {
         e.preventDefault()
         dispatch({ type: e.shiftKey ? 'redo' : 'undo' })
@@ -385,7 +527,7 @@ export default function App() {
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [togglePlay, dispatch])
+  }, [togglePlay, seek, dispatch])
 
   useEffect(() => {
     if (!message) return
@@ -393,57 +535,69 @@ export default function App() {
     return () => clearTimeout(t)
   }, [message])
 
-  const mood = getMood(song.moodId)
+  const total = formatDuration(songSeconds(song))
+  const cursorTime = formatDuration(cursor * stepSeconds(song.bpm))
 
   return (
     <div className="app">
-      <header className="topbar">
-        <div className="brand">
-          <span className="logo" aria-hidden>
-            ♪
-          </span>
-          <span>AIComposer</span>
+      <header className="bar">
+        <div className="bar-left">
+          <span className="wordmark">AIComposer</span>
+          <input className="title-input" value={song.title} onChange={(e) => setField({ title: e.target.value }, 'title')} aria-label="Tên bài hát" />
         </div>
-        <input
-          className="title-input"
-          value={song.title}
-          onChange={(e) => setField({ title: e.target.value }, 'title')}
-          aria-label="Tên bài hát"
-        />
-        <div className="transport">
-          <span className="dur" title="Độ dài bài">
-            ⏱ {formatDuration(songSeconds(song))}
-          </span>
-          <button className={`play${playing ? ' on' : ''}`} onClick={() => void togglePlay()} aria-label={playing ? 'Dừng' : 'Phát'}>
-            {playing ? '■ Dừng' : '▶ Phát'}
+
+        <div className="transport" role="group" aria-label="Điều khiển phát">
+          <button className="btn btn-quiet" onClick={restart} title="Phát lại từ đầu (Home để về đầu)">
+            Từ đầu
           </button>
-          <button className="ghost" onClick={() => dispatch({ type: 'undo' })} disabled={!history.past.length} title="Ctrl+Z">
-            ↶ Hoàn tác
+          <button className={`btn btn-play${playing ? ' is-on' : ''}`} onClick={() => void togglePlay()} title="Space">
+            {playing ? 'Dừng' : 'Phát'}
           </button>
-          <button className="ghost" onClick={() => dispatch({ type: 'redo' })} disabled={!history.future.length} title="Ctrl+Y">
-            ↷ Làm lại
-          </button>
+          <div className="lcd" aria-label="Vị trí và độ dài bài">
+            <span ref={timeRef}>{cursorTime}</span>
+            <span className="lcd-dim">/ {total}</span>
+          </div>
+          <BpmField bpm={song.bpm} onChange={(bpm) => setField({ bpm })} />
+          <div className="lcd" title="Giọng của bài">
+            <span>
+              {NOTE_NAMES[song.tonic]} {MODE_LABEL[song.mode]}
+            </span>
+          </div>
+          <div className="lcd lcd-dim-all" title="Số ô nhịp">
+            <span>{song.bars} ô</span>
+          </div>
         </div>
-        <div className="exports">
-          <button onClick={exportMidi}>Tải MIDI</button>
-          <button onClick={() => void exportWav()} disabled={!!busy}>
-            {busy ?? 'Tải WAV'}
+
+        <div className="bar-right">
+          <button className="btn btn-quiet" onClick={() => dispatch({ type: 'undo' })} disabled={!history.past.length} title="Ctrl+Z">
+            Hoàn tác
           </button>
+          <button className="btn btn-quiet" onClick={() => dispatch({ type: 'redo' })} disabled={!history.future.length} title="Ctrl+Y">
+            Làm lại
+          </button>
+          <Menu
+            label={busy ?? 'Xuất'}
+            items={[
+              { label: 'Âm thanh WAV', hint: 'Nghe trên mọi máy', onClick: () => void exportWav(), disabled: !!busy },
+              { label: 'MIDI', hint: 'Mở bằng phần mềm làm nhạc, có kèm lời', onClick: exportMidi },
+              { label: 'Lời bài hát (.txt)', onClick: exportLyrics, disabled: !lines.length },
+            ]}
+          />
+          <Menu
+            label="Tệp"
+            items={[
+              { label: 'Bài của tôi trên cloud', onClick: () => setCloudOpen(true), disabled: !serverOk },
+              { label: 'Lưu file về máy', hint: '.aicomposer.json', onClick: saveJson },
+              { label: 'Mở file từ máy', onClick: () => fileRef.current?.click() },
+            ]}
+          />
           <button
+            className="btn btn-primary"
             onClick={() => void saveCloud()}
             disabled={saving || !serverOk}
             title={serverOk ? (cloudId ? 'Cập nhật bài đã lưu trên cloud' : 'Lưu bài lên cloud') : 'Chưa kết nối máy chủ'}
           >
-            {saving ? 'Đang lưu…' : '☁ Lưu cloud'}
-          </button>
-          <button className="ghost" onClick={() => setCloudOpen(true)} disabled={!serverOk}>
-            Bài của tôi
-          </button>
-          <button className="ghost" onClick={saveJson} title="Tải file bài về máy">
-            Lưu file
-          </button>
-          <button className="ghost" onClick={() => fileRef.current?.click()}>
-            Mở file
+            {saving ? 'Đang lưu…' : 'Lưu cloud'}
           </button>
           <input
             ref={fileRef}
@@ -459,13 +613,217 @@ export default function App() {
         </div>
       </header>
 
+      <div className="workspace">
+        <aside className="side" aria-label="Bảng công cụ">
+          <div className="tabs" role="tablist">
+            {TABS.map((t) => (
+              <button key={t.id} role="tab" aria-selected={tab === t.id} className={`tab${tab === t.id ? ' is-on' : ''}`} onClick={() => setTab(t.id)}>
+                {t.label}
+                {t.id === 'lyrics' && alignment.hints.length > 0 && <span className="tab-count">{alignment.hints.length}</span>}
+              </button>
+            ))}
+          </div>
+          <div className="side-body">
+            {tab === 'start' && (
+              <>
+                <section className="side-sec">
+                  <h3 className="side-h">1. Chọn cảm xúc</h3>
+                  <p className="hint">Mỗi cảm xúc chọn sẵn giọng, tempo, vòng hợp âm, nhạc cụ và nhịp trống.</p>
+                  <div className="moods">
+                    {MOODS.map((m) => (
+                      <button
+                        key={m.id}
+                        className={`mood mood-${m.id}${song.moodId === m.id ? ' is-on' : ''}`}
+                        onClick={() => {
+                          dispatch({ type: 'mood', moodId: m.id })
+                          setCandidates(null)
+                        }}
+                        aria-pressed={song.moodId === m.id}
+                      >
+                        <span className="mood-label">{m.label}</span>
+                        <span className="mood-hint">{m.hint}</span>
+                      </button>
+                    ))}
+                  </div>
+                </section>
+
+                <section className="side-sec">
+                  <h3 className="side-h">2. Ngân nga ý tưởng</h3>
+                  <p className="hint">Cứ ngân “la la” hoặc “đa đa” câu nhạc trong đầu (tối đa 60 giây). Máy nghe ra cao độ, nhịp và giọng rồi phối thành bài.</p>
+                  <HummingPanel song={song} serverOk={serverOk} projectId={cloudId ?? undefined} canAppend={canAppend(song)} onApply={applyHum} onAppend={appendHum} />
+                </section>
+
+                <section className="side-sec">
+                  <h3 className="side-h">3. Hoàn thiện thành bài</h3>
+                  {song.sections ? (
+                    <>
+                      <div className="structure" aria-label="Cấu trúc bài">
+                        {song.sections.map((x) => (
+                          <span key={x.start} className={`sec-pill sec-${x.kind}`} style={{ flexGrow: x.bars }}>
+                            {SECTION_LABEL[x.kind]}
+                          </span>
+                        ))}
+                      </div>
+                      <p className="hint">
+                        Bài dài {total}. Muốn dài nữa thì thêm một lượt, hoặc đặt nốt vào vùng trống cuối timeline: bài tự dài ra theo.
+                      </p>
+                      <button className="btn" onClick={moreRound}>
+                        Thêm lượt đoạn chính và điệp khúc
+                      </button>
+                    </>
+                  ) : (
+                    <>
+                      <p className="hint">
+                        {song.melody.length
+                          ? `Đang có ${melodyEndBar(song)} ô giai điệu. Máy sẽ thêm dạo đầu, điệp khúc (đệm dày hơn) và phần kết.`
+                          : 'Cần có giai điệu trước: ngân nga, viết theo lời, hoặc bấm Tạo giai điệu trên timeline.'}
+                      </p>
+                      <button className="btn btn-primary" onClick={arrange} disabled={!song.melody.length}>
+                        Hoàn thiện thành bài
+                      </button>
+                    </>
+                  )}
+                </section>
+              </>
+            )}
+            {tab === 'lyrics' && (
+              <LyricsPanel
+                text={lyricsText}
+                lines={lines}
+                alignment={alignment}
+                hasMelody={song.melody.length > 0}
+                onText={(text) => setField({ lyrics: text }, 'lyrics')}
+                onMelodyFromLyrics={writeFromLyrics}
+                onSplitNotes={splitForLyrics}
+                onFixHint={fixHint}
+                onSeekLine={(step) => {
+                  seek(step)
+                  if (!player.playing) void startAt(step)
+                }}
+                onDownload={exportLyrics}
+              />
+            )}
+            {tab === 'mixer' && <Mixer song={song} status={status} onTrack={setTrack} onField={setField} onAudition={(id) => void audition(id)} />}
+            {tab === 'fx' && (
+              <FxPanel
+                song={song}
+                customFx={customFx}
+                selected={fxSelected}
+                onSelect={setFxSelected}
+                onPreview={(id) => void previewFx(id)}
+                onChange={setFx}
+                onVolume={(v) => setField({ fxVolume: v }, 'fxvol')}
+                onUpload={uploadFx}
+              />
+            )}
+          </div>
+        </aside>
+
+        <section className="editor" aria-label="Timeline">
+          <div className="toolbar">
+            <div className="tool-group" role="group" aria-label="Giai điệu">
+              <button className="btn btn-primary btn-sm" onClick={makeCandidates}>
+                Tạo giai điệu
+              </button>
+              {candidates && (
+                <div className="seg" role="group" aria-label="Chọn phương án giai điệu">
+                  {candidates.seeds.map((_, i) => (
+                    <button key={i} className={candidates.active === i ? 'is-on' : ''} onClick={() => pickCandidate(i)}>
+                      Phương án {i + 1}
+                    </button>
+                  ))}
+                </div>
+              )}
+              <button className="btn btn-sm" onClick={continueAction} disabled={!song.melody.length || song.bars + 4 > MAX_BARS}>
+                Viết tiếp
+              </button>
+              <button className="btn btn-sm" onClick={() => update((s) => ({ ...s, melody: varyMelody(s, randomSeed()) }))} disabled={!song.melody.length}>
+                Biến tấu
+              </button>
+              <button className="btn btn-sm" onClick={() => update((s) => ({ ...s, melody: shiftMelody(s, 1) }))} disabled={!song.melody.length}>
+                Cao hơn
+              </button>
+              <button className="btn btn-sm" onClick={() => update((s) => ({ ...s, melody: shiftMelody(s, -1) }))} disabled={!song.melody.length}>
+                Thấp hơn
+              </button>
+              <button className="btn btn-sm btn-quiet" onClick={() => setMelody([])} disabled={!song.melody.length}>
+                Xoá giai điệu
+              </button>
+            </div>
+            <div className="tool-group" role="group" aria-label="Chỉnh lưới">
+              <button
+                className={`btn btn-sm btn-toggle${lockScale ? ' is-on' : ''}`}
+                onClick={toggleLock}
+                aria-pressed={lockScale}
+                title={lockScale ? 'Chỉ hiện nốt trong thang âm, không thể bấm sai' : 'Đang hiện đủ 12 nốt'}
+              >
+                Khoá thang âm
+              </button>
+              <label className="field-inline">
+                <span>Nốt mới</span>
+                <select value={grid} onChange={(e) => setGrid(Number(e.target.value))}>
+                  <option value={4}>Đen (1 phách)</option>
+                  <option value={2}>Móc đơn (½ phách)</option>
+                  <option value={1}>Móc kép (¼ phách)</option>
+                </select>
+              </label>
+              <button className="btn btn-sm btn-quiet" onClick={trimEnd} disabled={contentEnd >= song.bars} title="Bỏ các ô không có nốt ở cuối bài">
+                Bỏ ô trống cuối bài
+              </button>
+              <div className="seg" role="group" aria-label="Thu phóng timeline">
+                <button onClick={() => setZoom(Math.max(0, zoom - 1))} disabled={zoom === 0}>
+                  Thu nhỏ
+                </button>
+                <button onClick={() => setZoom(Math.min(ZOOMS.length - 1, zoom + 1))} disabled={zoom === ZOOMS.length - 1}>
+                  Phóng to
+                </button>
+              </div>
+            </div>
+          </div>
+
+          <Timeline
+            song={song}
+            stepW={stepW}
+            lockScale={lockScale}
+            grid={grid}
+            syllables={lines.length ? alignment.syllableOf : null}
+            hintIds={hintIds}
+            selectedBar={selectedBar}
+            fxSelected={fxSelected}
+            customFx={customFx}
+            cursor={cursor}
+            onSelectBar={(bar) => {
+              setSelectedBar(bar === selectedBar ? null : bar)
+              void previewChord(song.chords[bar])
+            }}
+            onMelody={setMelody}
+            onFx={setFx}
+            onSeek={seek}
+            onPreview={(p) => void previewNote(p)}
+            onPreviewFx={(id) => void previewFx(id)}
+            gridRef={gridRef}
+            scrollRef={scrollRef}
+          />
+
+          <ChordInspector
+            song={song}
+            bar={selectedBar}
+            onSetChord={(bar, c) => update((s) => ({ ...s, chords: s.chords.map((x, i) => (i === bar ? c : x)) }))}
+            onPreviewChord={(c) => void previewChord(c)}
+            onNextProgression={nextProgression}
+            onHarmonize={() => update((s) => ({ ...s, chords: harmonize(s) }))}
+            onToggleSevenths={() => update((s) => ({ ...s, chords: s.chords.map((c) => ({ ...c, seventh: !s.chords[0]?.seventh })) }))}
+            onClose={() => setSelectedBar(null)}
+          />
+          <p className="foot">
+            Bấm vào lưới để thêm nốt, kéo để di chuyển, kéo mép phải để kéo dài, chuột phải để xoá. Bấm thước ô nhịp để chọn chỗ phát. Phím tắt: Space phát/dừng,
+            Home về đầu, Ctrl+Z hoàn tác. Bài được tự lưu trong trình duyệt.
+          </p>
+        </section>
+      </div>
+
       {cloudOpen && (
-        <CloudList
-          currentId={cloudId}
-          onOpen={(id) => void openCloud(id)}
-          onDeleted={(id) => id === cloudId && setCloudId(null)}
-          onClose={() => setCloudOpen(false)}
-        />
+        <CloudList currentId={cloudId} onOpen={(id) => void openCloud(id)} onDeleted={(id) => id === cloudId && setCloudId(null)} onClose={() => setCloudOpen(false)} />
       )}
 
       {message && (
@@ -473,209 +831,6 @@ export default function App() {
           {message}
         </div>
       )}
-
-      <main>
-        <section className="panel">
-          <h2>
-            <span className="num">1</span> Chọn cảm xúc
-          </h2>
-          <p className="sub">
-            Mỗi cảm xúc chọn sẵn giọng, tempo, vòng hợp âm, nhạc cụ và nhịp trống. Đang dùng: giọng {NOTE_NAMES[song.tonic]} {MODE_LABEL[song.mode]}, {song.bpm} BPM.
-          </p>
-          <div className="moods">
-            {MOODS.map((m) => (
-              <button
-                key={m.id}
-                className={`mood mood-${m.id}${song.moodId === m.id ? ' on' : ''}`}
-                onClick={() => {
-                  dispatch({ type: 'mood', moodId: m.id })
-                  setCandidates(null)
-                }}
-                aria-pressed={song.moodId === m.id}
-              >
-                <span className="mood-label">{m.label}</span>
-                <span className="mood-hint">{m.hint}</span>
-              </button>
-            ))}
-          </div>
-        </section>
-
-        <section className="panel hum-panel">
-          <h2>
-            <span className="num">2</span> Ngân nga ý tưởng của bạn
-          </h2>
-          <p className="sub">
-            Không cần biết nốt nhạc: cứ ngân “la la” hoặc “đa đa” một câu nhạc trong đầu (tối đa 60 giây). Máy sẽ nghe ra cao độ, nhịp và giọng, rồi
-            biến thành giai điệu có hợp âm, bass và trống theo cảm xúc bạn chọn.
-          </p>
-          <HummingPanel
-            song={song}
-            serverOk={serverOk}
-            projectId={cloudId ?? undefined}
-            canAppend={canAppend(song)}
-            onApply={applyHum}
-            onAppend={appendHum}
-          />
-          {song.melody.length > 0 && (
-            <div className="flow">
-              {song.sections ? (
-                <div className="structure" aria-label="Cấu trúc bài">
-                  {song.sections.map((x) => (
-                    <span key={x.start} className={`sec sec-${x.kind}`} style={{ flexGrow: x.bars }}>
-                      {SECTION_LABEL[x.kind]} <small>{x.bars} ô</small>
-                    </span>
-                  ))}
-                </div>
-              ) : (
-                <p className="muted-text">
-                  Bài đang có {melodyEndBar(song)} ô giai điệu. Ngân thêm đoạn nữa để ghép tiếp, hoặc để máy thêm dạo đầu, điệp khúc và phần kết.
-                </p>
-              )}
-              {!song.sections && (
-                <label className="field inline">
-                  <span>Độ dài mong muốn</span>
-                  <select value={targetSec} onChange={(e) => setTargetSec(Number(e.target.value))}>
-                    {TARGETS.map((t) => (
-                      <option key={t.sec} value={t.sec}>
-                        {t.label}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-              )}
-              <button className="primary" onClick={arrange} disabled={!!song.sections}>
-                {song.sections ? `✓ Đã hoàn thiện (${formatDuration(songSeconds(song))})` : '🎼 Hoàn thiện thành bài'}
-              </button>
-            </div>
-          )}
-        </section>
-
-        <section className="panel">
-          <h2>
-            <span className="num">3</span> Vòng hợp âm
-          </h2>
-          <p className="sub">
-            Bấm một ô để nghe và đổi hợp âm. Màu cho biết cảm giác: <span className="tag fn-home">Ổn định</span>{' '}
-            <span className="tag fn-move">Chuyển động</span> <span className="tag fn-tension">Căng, muốn về</span>
-          </p>
-          <ChordRow
-            song={song}
-            onSetChord={(bar, c) => update((s) => ({ ...s, chords: s.chords.map((x, i) => (i === bar ? c : x)) }))}
-            onPreviewChord={(c) => void previewChord(c)}
-          />
-          <div className="actions">
-            <button onClick={nextProgression}>Đổi vòng hợp âm khác</button>
-            <button onClick={() => update((s) => ({ ...s, chords: harmonize(s) }))} disabled={!song.melody.length} title={song.melody.length ? '' : 'Cần có giai điệu trước'}>
-              Hợp âm theo giai điệu
-            </button>
-            <button
-              className={song.chords[0]?.seventh ? 'toggle on' : 'toggle'}
-              onClick={() => update((s) => ({ ...s, chords: s.chords.map((c) => ({ ...c, seventh: !s.chords[0]?.seventh })) }))}
-              aria-pressed={song.chords[0]?.seventh}
-            >
-              Hợp âm màu (7)
-            </button>
-          </div>
-        </section>
-
-        <section className="panel">
-          <h2>
-            <span className="num">4</span> Giai điệu
-          </h2>
-          <p className="sub">
-            Hàng sáng màu là <b>nốt an toàn</b> (thuộc hợp âm đang vang). Bấm vào lưới để thêm nốt, kéo để di chuyển, kéo mép phải để kéo dài, chuột phải
-            hoặc bấm đúp để xoá.
-          </p>
-          <div className="actions">
-            <button className="primary" onClick={makeCandidates}>
-              ✨ Tạo giai điệu
-            </button>
-            {candidates && (
-              <div className="seg" role="group" aria-label="Chọn phương án giai điệu">
-                {candidates.seeds.map((_, i) => (
-                  <button key={i} className={candidates.active === i ? 'on' : ''} onClick={() => pickCandidate(i)}>
-                    Phương án {i + 1}
-                  </button>
-                ))}
-              </div>
-            )}
-            <button onClick={() => update((s) => ({ ...s, melody: continueMelody(s, randomSeed()) }))} disabled={!canContinue} title={canContinue ? 'Viết tiếp phần còn trống' : 'Giai điệu đã kín bài hoặc chưa có'}>
-              Viết tiếp
-            </button>
-            <button onClick={() => update((s) => ({ ...s, melody: varyMelody(s, randomSeed()) }))} disabled={!song.melody.length}>
-              Biến tấu
-            </button>
-            <button onClick={() => update((s) => ({ ...s, melody: shiftMelody(s, 1) }))} disabled={!song.melody.length}>
-              Cao hơn
-            </button>
-            <button onClick={() => update((s) => ({ ...s, melody: shiftMelody(s, -1) }))} disabled={!song.melody.length}>
-              Thấp hơn
-            </button>
-            <button className="ghost" onClick={() => setMelody([])} disabled={!song.melody.length}>
-              Xoá giai điệu
-            </button>
-          </div>
-          <div className="actions small">
-            <button className={lockScale ? 'toggle on' : 'toggle'} onClick={toggleLock} aria-pressed={lockScale}>
-              {lockScale ? '🔒 Khoá thang âm (không thể sai nốt)' : '🔓 Đã mở khoá: hiện đủ 12 nốt'}
-            </button>
-            <label className="field inline">
-              <span>Độ dài nốt mới</span>
-              <select value={grid} onChange={(e) => setGrid(Number(e.target.value))}>
-                <option value={4}>Đen (1 phách)</option>
-                <option value={2}>Móc đơn (½ phách)</option>
-                <option value={1}>Móc kép (¼ phách)</option>
-              </select>
-            </label>
-            <label className="field inline">
-              <span>Độ dài bài</span>
-              <select value={song.bars} onChange={(e) => update((s) => resizeSong(s, Number(e.target.value)))}>
-                {BAR_OPTIONS.includes(song.bars) ? null : <option value={song.bars}>{song.bars} ô nhịp</option>}
-                {BAR_OPTIONS.map((b) => (
-                  <option key={b} value={b}>
-                    {b} ô nhịp ({formatDuration(songSeconds({ bars: b, bpm: song.bpm }))})
-                  </option>
-                ))}
-              </select>
-            </label>
-            <span className="muted-text">{song.melody.length} nốt</span>
-          </div>
-          <PianoRoll
-            song={song}
-            lockScale={lockScale}
-            grid={grid}
-            onChange={setMelody}
-            onPreview={(p) => void previewNote(p)}
-            playheadRef={playheadRef}
-          />
-        </section>
-
-        <section className="panel">
-          <h2>
-            <span className="num">5</span> Nhạc cụ và cách đệm
-          </h2>
-          <p className="sub">128 nhạc cụ chuẩn General MIDI và 5 bộ trống. Sample tải từ internet khi dùng lần đầu; lúc chưa tải xong app phát bằng synth dự phòng.</p>
-          <Mixer song={song} status={status} onTrack={setTrack} onField={setField} onAudition={(id) => void audition(id)} />
-        </section>
-
-        <section className="panel">
-          <h2>
-            <span className="num">6</span> Hiệu ứng âm thanh
-          </h2>
-          <p className="sub">Tiếng mưa, gió, sóng biển, chim hót, vỗ tay, riser, boom… Chọn một hiệu ứng rồi bấm vào phách muốn đặt.</p>
-          <FxPanel
-            song={song}
-            customFx={customFx}
-            onPreview={(id) => void previewFx(id)}
-            onChange={(fx) => update((s) => ({ ...s, fx }))}
-            onVolume={(v) => setField({ fxVolume: v }, 'fxvol')}
-            onUpload={uploadFx}
-          />
-        </section>
-      </main>
-      <footer className="foot">
-        Đang ở cảm xúc “{mood.label}”. Phím tắt: Space phát/dừng, Ctrl+Z hoàn tác, Ctrl+Y làm lại. Bài được tự lưu trong trình duyệt.
-      </footer>
     </div>
   )
 }

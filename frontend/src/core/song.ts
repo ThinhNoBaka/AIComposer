@@ -3,6 +3,9 @@ import type { Chord, Mode } from './theory'
 /** Số bước (nốt móc kép) trong một ô nhịp 4/4. */
 export const STEPS_PER_BAR = 16
 
+/** Giới hạn số ô nhịp của cả bài. 256 ô ở 120 BPM là hơn 8 phút. */
+export const MAX_BARS = 256
+
 export type Note = {
   id: string
   /** Cao độ MIDI. */
@@ -71,6 +74,8 @@ export type Song = {
   seed: number
   /** Cấu trúc bài sau khi bấm "Hoàn thiện thành bài". Không có = cả bài là một đoạn. */
   sections?: Section[]
+  /** Lời bài hát, mỗi dòng một câu; dòng dạng [Điệp khúc] là nhãn. */
+  lyrics?: string
 }
 
 let counter = 0
@@ -105,7 +110,7 @@ export function validateSong(raw: unknown): string | null {
   const s = raw as Partial<Song>
   if (s.version !== 1) return 'Phiên bản file không được hỗ trợ.'
   if (typeof s.bpm !== 'number' || s.bpm < 40 || s.bpm > 220) return 'Tempo phải trong khoảng 40–220 BPM.'
-  if (typeof s.bars !== 'number' || s.bars < 1 || s.bars > 128) return 'Số ô nhịp không hợp lệ.'
+  if (typeof s.bars !== 'number' || s.bars < 1 || s.bars > MAX_BARS) return 'Số ô nhịp không hợp lệ.'
   if (!Array.isArray(s.chords) || s.chords.length !== s.bars) return 'Số hợp âm phải bằng số ô nhịp.'
   if (!Array.isArray(s.melody)) return 'Thiếu giai điệu.'
   for (const n of s.melody) {
@@ -119,6 +124,7 @@ export function validateSong(raw: unknown): string | null {
       if (!(x.kind in SECTION_LABEL) || x.start < 0 || x.bars < 1 || x.start + x.bars > s.bars) return 'Cấu trúc bài bị hỏng.'
     }
   }
+  if (s.lyrics !== undefined && (typeof s.lyrics !== 'string' || s.lyrics.length > 20000)) return 'Lời bài hát bị hỏng hoặc quá dài.'
   if (!s.tracks || !s.tracks.melody || !s.tracks.chords || !s.tracks.bass || !s.tracks.drums) return 'Thiếu thông tin track.'
   return null
 }

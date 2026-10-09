@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { appendHumming, applyHumming, arrangeSong, canAppend, fitShift, formatDuration, resizeSong, songSeconds } from './humming'
+import { addRound, appendHumming, applyHumming, arrangeSong, canAppend, contentEndBar, extendSong, fitShift, formatDuration, resizeSong, songSeconds } from './humming'
 import { getMood, songFromMood } from './moods'
 import { bassNotes, drumHits } from './accompany'
 import { isInScale } from './theory'
@@ -45,12 +45,12 @@ describe('đưa bản ngân nga vào bài', () => {
     for (const n of song.melody) expect(isInScale(n.pitch, 9, 'minor')).toBe(true)
   })
 
-  it('bản ngân quá dài bị cắt ở 128 ô và báo số nốt bỏ', () => {
-    const long = { ...HUM, bars: 150, melody: Array.from({ length: 600 }, (_, i) => ({ pitch: 67, start: i * 4, dur: 4, vel: 90 })) }
+  it('bản ngân quá dài bị cắt ở 256 ô và báo số nốt bỏ', () => {
+    const long = { ...HUM, bars: 300, melody: Array.from({ length: 1200 }, (_, i) => ({ pitch: 67, start: i * 4, dur: 4, vel: 90 })) }
     const { song, dropped } = applyHumming(songFromMood(getMood('vui')), long, { useKey: true, useBpm: true, autoHarmony: false })
-    expect(song.bars).toBe(128)
-    expect(dropped).toBe(88)
-    expect(Math.max(...song.melody.map((n) => n.start + n.dur))).toBeLessThanOrEqual(128 * 16)
+    expect(song.bars).toBe(256)
+    expect(dropped).toBe(176)
+    expect(Math.max(...song.melody.map((n) => n.start + n.dur))).toBeLessThanOrEqual(256 * 16)
   })
 })
 
@@ -123,10 +123,10 @@ describe('ngân từng đoạn rồi ghép', () => {
   })
 
   it('bài quá dài thì không lặp điệp khúc', () => {
-    const big = applyHumming(songFromMood(getMood('vui')), { ...HUM, bars: 64, melody: Array.from({ length: 256 }, (_, i) => ({ pitch: 67, start: i * 4, dur: 4, vel: 90 })) }, { useKey: true, useBpm: true, autoHarmony: false }).song
+    const big = applyHumming(songFromMood(getMood('vui')), { ...HUM, bars: 128, melody: Array.from({ length: 512 }, (_, i) => ({ pitch: 67, start: i * 4, dur: 4, vel: 90 })) }, { useKey: true, useBpm: true, autoHarmony: false }).song
     const s = arrangeSong(big, 1, 600)
     expect(s.sections?.map((x) => x.kind)).toEqual(['intro', 'verse', 'outro'])
-    expect(s.bars).toBe(4 + 64 + 2)
+    expect(s.bars).toBe(4 + 128 + 2)
   })
 })
 
@@ -143,5 +143,47 @@ describe('đổi độ dài bài', () => {
     expect(shorter.fx).toHaveLength(0)
     expect(shorter.sections).toBeUndefined()
     expect(validateSong(shorter)).toBeNull()
+  })
+})
+
+describe('timeline kéo dài tự do', () => {
+  it('kéo dài bài giữ cấu trúc, ô mới lặp hợp âm của đoạn cuối', () => {
+    const base = appendHumming(applyHumming(songFromMood(getMood('vui')), HUM, { useKey: true, useBpm: true, autoHarmony: true }).song, HUM, {
+      autoHarmony: true,
+    }).song
+    const s = arrangeSong(base, 5)
+    const longer = extendSong(s, 26)
+    expect(longer.bars).toBe(26)
+    expect(longer.sections).toEqual(s.sections)
+    expect(longer.chords.slice(22).map((c) => c.degree)).toEqual(s.chords.slice(12, 16).map((c) => c.degree))
+    expect(extendSong(s, 10)).toBe(s)
+    expect(validateSong(longer)).toBeNull()
+    expect(contentEndBar(longer)).toBe(22)
+  })
+
+  it('thêm một lượt đoạn chính + điệp khúc trước phần kết', () => {
+    const base = appendHumming(applyHumming(songFromMood(getMood('vui')), HUM, { useKey: true, useBpm: true, autoHarmony: true }).song, HUM, {
+      autoHarmony: true,
+    }).song
+    const s = arrangeSong(base, 5)
+    const more = addRound(s, 9)!
+    expect(more.sections?.map((x) => [x.kind, x.start, x.bars])).toEqual([
+      ['intro', 0, 4],
+      ['verse', 4, 8],
+      ['chorus', 12, 8],
+      ['verse', 20, 8],
+      ['chorus', 28, 8],
+      ['outro', 36, 2],
+    ])
+    expect(more.bars).toBe(38)
+    expect(more.chords).toHaveLength(38)
+    expect(validateSong(more)).toBeNull()
+    const notesIn = (from: number) => more.melody.filter((n) => n.start >= from * 16 && n.start < (from + 8) * 16).map((n) => [n.pitch, n.start - from * 16])
+    expect(notesIn(28)).toEqual(notesIn(12))
+    expect(new Set(more.melody.map((n) => n.id)).size).toBe(more.melody.length)
+    // Nốt kết dời theo phần kết.
+    expect(Math.max(...more.melody.map((n) => n.start))).toBe(36 * 16)
+    expect(more.fx.some((f) => f.fx === 'riser' && f.start === 27 * 16)).toBe(true)
+    expect(addRound(base, 1)).toBeNull()
   })
 })

@@ -3,12 +3,11 @@
 
 import { varyMelody } from './melody'
 import { getMood, progressionToChords } from './moods'
-import { STEPS_PER_BAR, newId, type Note, type Section, type Song } from './song'
+import { MAX_BARS, STEPS_PER_BAR, newId, type Note, type Section, type Song } from './song'
 import { harmonize } from './suggest'
 import { isInScale, snapToScale, type Chord, type Mode } from './theory'
 
-/** Giới hạn số ô nhịp của cả bài (khớp với validateSong). 128 ô ở 120 BPM là hơn 4 phút. */
-export const MAX_BARS = 128
+export { MAX_BARS }
 
 /** Thời lượng bài (giây). */
 export function songSeconds(song: Pick<Song, 'bars' | 'bpm'>): number {
@@ -224,4 +223,59 @@ export function resizeSong(song: Song, bars: number): Song {
     // Đổi độ dài làm cấu trúc cũ không còn đúng.
     sections: undefined,
   }
+}
+
+/**
+ * Kéo dài bài tới `bars` ô (chỉ thêm, không bớt), giữ nguyên cấu trúc đã có.
+ * Hợp âm ô mới lặp lại vòng hợp âm: bài đã hoàn thiện thì lặp đoạn chính/điệp khúc cuối, chưa thì lặp từ đầu bài.
+ */
+export function extendSong(song: Song, bars: number): Song {
+  const n = Math.min(MAX_BARS, Math.ceil(bars))
+  if (n <= song.bars) return song
+  const body = song.sections?.filter((x) => x.kind === 'verse' || x.kind === 'chorus').at(-1)
+  const src = body ? song.chords.slice(body.start, body.start + body.bars) : song.chords
+  const loop = src.length ? src : [{ degree: 0, seventh: false }]
+  const extra = Array.from({ length: n - song.bars }, (_, i) => ({ ...loop[i % loop.length] }))
+  return { ...song, bars: n, chords: [...song.chords, ...extra] }
+}
+
+/** Ô cuối cùng còn nốt hoặc hiệu ứng (để bỏ các ô trống thừa ở cuối bài). */
+export function contentEndBar(song: Song): number {
+  const fxEnd = song.fx.length ? Math.max(...song.fx.map((f) => f.start + 1)) : 0
+  const secEnd = song.sections?.length ? Math.max(...song.sections.map((x) => x.start + x.bars)) : 0
+  return Math.max(1, melodyEndBar(song), Math.ceil(fxEnd / STEPS_PER_BAR), secEnd)
+}
+
+/** Bài đã hoàn thiện: chèn thêm một lượt đoạn chính + điệp khúc ngay trước phần kết. */
+export function addRound(song: Song, seed: number): Song | null {
+  const secs = song.sections
+  const outro = secs?.at(-1)
+  const verse = secs?.find((x) => x.kind === 'verse')
+  if (!secs || !outro || outro.kind !== 'outro' || !verse) return null
+  const chorus = secs.find((x) => x.kind === 'chorus')
+  const parts = chorus ? [verse, chorus] : [verse]
+  const add = parts.reduce((s, x) => s + x.bars, 0)
+  if (song.bars + add > MAX_BARS) return null
+  const at = outro.start
+  const shiftBy = add * STEPS_PER_BAR
+  const inRange = (start: number, x: Section) => start >= x.start * STEPS_PER_BAR && start < (x.start + x.bars) * STEPS_PER_BAR
+  const melody: Note[] = song.melody.map((n) => (n.start >= at * STEPS_PER_BAR ? { ...n, start: n.start + shiftBy } : n))
+  const fx = song.fx.map((f) => (f.start >= at * STEPS_PER_BAR ? { ...f, start: f.start + shiftBy } : f))
+  const chords: Chord[] = song.chords.slice(0, at)
+  const sections: Section[] = secs.slice(0, -1)
+  let bar = at
+  for (const x of parts) {
+    const delta = (bar - x.start) * STEPS_PER_BAR
+    const src = song.melody.filter((n) => inRange(n.start, x))
+    // Đoạn chính lượt mới được biến tấu nhẹ; điệp khúc giữ nguyên cho dễ nhớ.
+    const notes = (x.kind === 'verse' ? varyMelody({ ...song, melody: src }, seed) : src).map((n) => ({ ...n, start: n.start + delta }))
+    melody.push(...notes.map((n) => ({ ...n, id: newId() })))
+    chords.push(...song.chords.slice(x.start, x.start + x.bars).map((c) => ({ ...c })))
+    sections.push({ kind: x.kind, start: bar, bars: x.bars })
+    if (x.kind === 'chorus') fx.push({ id: newId('f'), fx: 'riser', start: (bar - 1) * STEPS_PER_BAR })
+    bar += x.bars
+  }
+  chords.push(...song.chords.slice(at).map((c) => ({ ...c })))
+  sections.push({ ...outro, start: bar })
+  return { ...song, bars: song.bars + add, chords, melody, fx, sections }
 }

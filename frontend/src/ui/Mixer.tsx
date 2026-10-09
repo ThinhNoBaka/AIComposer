@@ -84,10 +84,10 @@ export function Mixer({ song, status, onTrack, onField, onAudition }: Props) {
                   onChange={(e) => onTrack(id, { volume: Number(e.target.value) }, `vol:${id}`)}
                 />
               </label>
-              <button className={t.muted ? 'toggle on' : 'toggle'} onClick={() => onTrack(id, { muted: !t.muted })} aria-pressed={t.muted}>
+              <button className={`btn btn-sm btn-toggle${t.muted ? ' is-on' : ''}`} onClick={() => onTrack(id, { muted: !t.muted })} aria-pressed={t.muted}>
                 {t.muted ? 'Đang tắt' : 'Tắt tiếng'}
               </button>
-              <button className="ghost" onClick={() => onAudition(id)}>
+              <button className="btn btn-sm btn-quiet" onClick={() => onAudition(id)}>
                 Nghe thử
               </button>
             </div>
@@ -107,7 +107,7 @@ export function Mixer({ song, status, onTrack, onField, onAudition }: Props) {
           <span>Hợp âm</span>
           <div className="seg">
             {CHORD_STYLES.map((c) => (
-              <button key={c.id} className={song.chordStyle === c.id ? 'on' : ''} onClick={() => onField({ chordStyle: c.id })}>
+              <button key={c.id} className={song.chordStyle === c.id ? 'is-on' : ''} onClick={() => onField({ chordStyle: c.id })}>
                 {c.label}
               </button>
             ))}
@@ -133,7 +133,7 @@ export function Mixer({ song, status, onTrack, onField, onAudition }: Props) {
           <span>Độ dày</span>
           <div className="seg">
             {(['Thưa', 'Vừa', 'Dày'] as const).map((label, i) => (
-              <button key={label} className={song.density === i ? 'on' : ''} onClick={() => onField({ density: i as 0 | 1 | 2 })}>
+              <button key={label} className={song.density === i ? 'is-on' : ''} onClick={() => onField({ density: i as 0 | 1 | 2 })}>
                 {label}
               </button>
             ))}

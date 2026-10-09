@@ -6,12 +6,14 @@ Web app giúp người không biết nhạc lý vẫn sáng tác được: **ng�
 
 - **Ngân nga thành giai điệu** (phần Data Science chính): thu bằng micro hoặc tải file lên, có đếm nhịp trước khi thu. Máy trả về nốt, giọng, tempo, độ tin cậy và hình các nốt thô nó nghe được.
 - **Ngân từng đoạn rồi ghép**: mỗi lần ngân có thể ghép nối tiếp vào sau đoạn trước. Máy tự dịch về đúng giọng của bài nếu bạn ngân lệch.
-- **Hoàn thiện thành bài**: chọn độ dài mong muốn (1 lượt, khoảng 2, 3, 4 hoặc 5 phút), máy thêm dạo đầu, điệp khúc (đệm dày hơn, có riser dẫn vào), lặp lại các đoạn và kết về chủ âm. Bài dài tối đa 128 ô nhịp.
+- **Hoàn thiện thành bài**: máy thêm dạo đầu, điệp khúc (đệm dày hơn, có riser dẫn vào) và kết về chủ âm. Muốn dài hơn thì bấm thêm lượt đoạn chính + điệp khúc, bao nhiêu lần cũng được.
+- **Timeline kéo dài tự do** kiểu phần mềm làm nhạc: thước ô nhịp (bấm để chọn chỗ phát), cấu trúc bài, hợp âm, piano roll và làn hiệu ứng chung một thanh cuộn. Phía sau bài luôn có vài ô trống: đặt nốt hay hiệu ứng vào đó là bài tự dài ra, không cần chọn trước độ dài (tối đa 256 ô nhịp, hơn 8 phút ở 120 BPM).
+- **Hỗ trợ viết lời tiếng Việt**: gõ lời theo từng câu, chữ hiện ngay trên từng nốt. Máy đếm chữ so với số nốt của mỗi câu nhạc, cảnh báo chỗ giai điệu đi ngược thanh điệu (ví dụ chữ "về" hát lên cao dễ nghe thành "vê") và sửa bằng một nút, tìm vần chữ cuối câu, gợi ý chữ cùng vần, chẻ nốt cho đủ chữ, và **viết giai điệu theo lời** (cao độ đi theo thanh sắc, huyền, nặng…). Lời được xuất kèm trong file MIDI và ra file .txt.
 - **8 cảm xúc** (Vui tươi, Buồn, Chill, Hùng tráng, Lãng mạn, Sôi động, Mơ màng, Dân gian): mỗi cảm xúc chọn sẵn giọng, tempo, vòng hợp âm, nhạc cụ, kiểu đệm và trống.
 - **Hợp âm có màu theo cảm giác** (Ổn định / Chuyển động / Căng): khi đổi, gợi ý hợp âm hợp với giai điệu. Có nút "Hợp âm theo giai điệu" (thuật toán Viterbi).
 - **Tạo giai điệu tự động**: 3 phương án, Viết tiếp, Biến tấu, Cao hơn/Thấp hơn.
 - **128 nhạc cụ General MIDI, 5 bộ trống và 22 hiệu ứng âm thanh** (mưa, gió, sóng biển, chim, vỗ tay, riser…). Bạn cũng tải được âm thanh của riêng mình.
-- **Xuất MIDI, WAV và file bài (JSON)**. Bài được **lưu lên cloud (PostgreSQL)** và mở lại được từ mục "Bài của tôi".
+- **Xuất MIDI (kèm lời), WAV, lời (.txt) và file bài (JSON)**. Bài được **lưu lên cloud (PostgreSQL)** và mở lại được từ mục "Bài của tôi".
 
 ## Kiến trúc
 
@@ -68,7 +70,7 @@ Mở http://localhost:5173. Vite tự chuyển `/api` sang backend ở cổng 80
 ### Kiểm thử
 
 ```bash
-cd frontend && npm test          # lý thuyết nhạc, sinh giai điệu, đệm, MIDI, humming → bài
+cd frontend && npm test          # lý thuyết nhạc, sinh giai điệu, đệm, MIDI, humming → bài, lời tiếng Việt
 cd backend && .venv/bin/python -m pytest   # nhận nốt (F1, tempo, giọng, WebM), API, phân quyền
 ```
 

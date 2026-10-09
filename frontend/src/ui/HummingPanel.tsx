@@ -200,17 +200,17 @@ export function HummingPanel({ song, serverOk, projectId, canAppend, onApply, on
   return (
     <div className="hum">
       {offline && <p className="hum-warn">Chưa kết nối máy chủ nhận nốt nên chưa thu được. Các phần khác của app vẫn dùng bình thường.</p>}
-      <div className="actions">
+      <div className="row wrap">
         {!recording ? (
-          <button className="primary hum-rec" onClick={() => void startRecording()} disabled={working || offline}>
-            🎙 Bắt đầu ngân
+          <button className="btn btn-primary hum-rec" onClick={() => void startRecording()} disabled={working || offline}>
+            Bắt đầu ngân
           </button>
         ) : (
-          <button className="hum-rec stop" onClick={() => void stopRecording()} disabled={phase === 'opening'}>
-            ■ {phase === 'countin' ? 'Huỷ' : 'Xong'}
+          <button className="btn btn-rec-stop hum-rec" onClick={() => void stopRecording()} disabled={phase === 'opening'}>
+            {phase === 'countin' ? 'Huỷ' : 'Xong, nhận nốt'}
           </button>
         )}
-        <button onClick={() => fileRef.current?.click()} disabled={recording || working || offline}>
+        <button className="btn" onClick={() => fileRef.current?.click()} disabled={recording || working || offline}>
           Tải file ghi âm
         </button>
         <input
@@ -241,7 +241,7 @@ export function HummingPanel({ song, serverOk, projectId, canAppend, onApply, on
           <span className="hum-meter" aria-label="Mức âm micro">
             <span style={{ width: `${Math.round(level * 100)}%` }} />
           </span>
-          {seconds > 2 && level < 0.03 && <span className="muted-text">Micro chưa nghe thấy gì, hãy ngân to hơn.</span>}
+          {seconds > 2 && level < 0.03 && <span className="hint">Micro chưa nghe thấy gì, hãy ngân to hơn.</span>}
         </div>
       )}
       {working && <div className="hum-live">Đang nghe và nhận nốt…</div>}
@@ -259,22 +259,22 @@ export function HummingPanel({ song, serverOk, projectId, canAppend, onApply, on
           <RawNotes result={result} />
           {song.melody.length > 0 && (
             <div className="seg hum-how" role="group" aria-label="Cách dùng bản ngân">
-              <button className={how === 'append' ? 'on' : ''} onClick={() => setHow('append')} disabled={!canAppend}>
+              <button className={how === 'append' ? 'is-on' : ''} onClick={() => setHow('append')} disabled={!canAppend}>
                 Ghép tiếp sau đoạn trước
               </button>
-              <button className={how === 'replace' ? 'on' : ''} onClick={() => setHow('replace')}>
+              <button className={how === 'replace' ? 'is-on' : ''} onClick={() => setHow('replace')}>
                 Thay toàn bộ giai điệu
               </button>
             </div>
           )}
           {song.melody.length > 0 && !canAppend && (
-            <p className="muted-text">
-              {song.sections ? 'Bài đã hoàn thiện nên không ghép thêm được. Bấm Hoàn tác để bỏ bước hoàn thiện rồi ghép tiếp.' : 'Bài đã đủ dài (128 ô nhịp).'}
+            <p className="hint">
+              {song.sections ? 'Bài đã hoàn thiện nên không ghép thêm được. Bấm Hoàn tác để bỏ bước hoàn thiện rồi ghép tiếp.' : 'Bài đã đủ dài (256 ô nhịp).'}
             </p>
           )}
           <div className="hum-opts">
             {how === 'append' && song.melody.length > 0 ? (
-              <span className="muted-text">Đoạn mới giữ giọng {NOTE_NAMES[song.tonic]} và tempo {song.bpm} BPM của bài, tự dịch cho khớp nếu bạn ngân lệch giọng.</span>
+              <span className="hint">Đoạn mới giữ giọng {NOTE_NAMES[song.tonic]} và tempo {song.bpm} BPM của bài, tự dịch cho khớp nếu bạn ngân lệch giọng.</span>
             ) : (
               <>
             <label className="check">
@@ -292,26 +292,26 @@ export function HummingPanel({ song, serverOk, projectId, canAppend, onApply, on
               Tự chọn hợp âm hợp với giai điệu
             </label>
           </div>
-          <div className="actions">
+          <div className="row wrap">
             {how === 'append' && song.melody.length > 0 ? (
               <button
-                className="primary"
+                className="btn btn-primary"
                 onClick={() => {
                   onAppend(result, { autoHarmony })
                   setResult(null)
                 }}
               >
-                ➕ Ghép đoạn này vào bài
+                Ghép đoạn này vào bài
               </button>
             ) : (
               <button
-                className="primary"
+                className="btn btn-primary"
                 onClick={() => {
                   onApply(result, { useKey, useBpm: useBpm && !sameBpm, autoHarmony })
                   setResult(null)
                 }}
               >
-                ✨ Dùng làm giai điệu và phối thành bài
+                Dùng làm giai điệu và phối thành bài
               </button>
             )}
           </div>

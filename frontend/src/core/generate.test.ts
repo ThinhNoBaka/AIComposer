@@ -211,6 +211,17 @@ describe('sự kiện, swing, MIDI và file', () => {
     expect(back.tracks[0].notes[0].ticks).toBe(first.start * (back.header.ppq / 4))
   })
 
+  it('file MIDI có lời: mỗi chữ một sự kiện lyric, đúng UTF-8', () => {
+    const s = withMelody('vui')
+    const sorted = [...s.melody].sort((a, b) => a.start - b.start)
+    const back = new Midi(songToMidi({ ...s, lyrics: 'Người ơi nhớ' }))
+    const lyr = back.header.meta.filter((m) => m.type === 'lyrics')
+    expect(lyr.length).toBeGreaterThan(0)
+    const decode = (t: string) => new TextDecoder().decode(Uint8Array.from(t, (c) => c.charCodeAt(0)))
+    expect(decode(lyr[0].text)).toBe('Người')
+    expect(lyr[0].ticks).toBe(sorted[0].start * (back.header.ppq / 4))
+  })
+
   it('validateSong nhận bài hợp lệ, từ chối file hỏng', () => {
     const s = withMelody('vui')
     expect(validateSong(JSON.parse(JSON.stringify(s)))).toBeNull()
