@@ -11,6 +11,7 @@ export type Command =
   | { kind: 'key'; tonic: number; mode: Mode }
   | { kind: 'transpose'; semitones: number }
   | { kind: 'arrange' }
+  | { kind: 'varyArrangement' }
   | { kind: 'addRound' }
   | { kind: 'extend'; bars: number }
   | { kind: 'melody'; action: 'new' | 'vary' | 'continue' | 'up' | 'down' | 'clear' }
@@ -130,7 +131,8 @@ function parseClause(c: string): Command[] {
   if (/xoa giai dieu/.test(c)) out.push({ kind: 'melody', action: 'clear' })
   else if (/(tao|viet|lam|doi) (giai dieu|nhac)( moi| khac)?|giai dieu (moi|khac)/.test(c) && !/viet tiep/.test(c)) out.push({ kind: 'melody', action: 'new' })
   else if (/viet tiep|noi tiep/.test(c)) out.push({ kind: 'melody', action: 'continue' })
-  else if (/bien tau/.test(c) && !/phoi/.test(c)) out.push({ kind: 'melody', action: 'vary' })
+  else if (/bien tau/.test(c) && /phoi|dem|trong/.test(c)) out.push({ kind: 'varyArrangement' })
+  else if (/bien tau/.test(c)) out.push({ kind: 'melody', action: 'vary' })
   else if (/(giai dieu|not).*(cao (hon|len)|len)|cao giai dieu/.test(c)) out.push({ kind: 'melody', action: 'up' })
   else if (/(giai dieu|not).*(thap (hon|xuong)|xuong)/.test(c)) out.push({ kind: 'melody', action: 'down' })
 
@@ -194,6 +196,8 @@ export function describe(cmd: Command): string {
       return `${cmd.semitones > 0 ? 'nâng' : 'hạ'} ${Math.abs(cmd.semitones)} nửa cung`
     case 'arrange':
       return 'hoàn thiện thành bài'
+    case 'varyArrangement':
+      return 'biến tấu bản phối'
     case 'addRound':
       return 'thêm lượt đoạn chính và điệp khúc'
     case 'extend':

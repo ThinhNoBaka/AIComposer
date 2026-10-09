@@ -37,6 +37,7 @@ group('lệnh tiếng Việt', () => {
     expect(kinds('hạ 1 cung')).toEqual([{ kind: 'transpose', semitones: -2 }])
     expect(kinds('đổi hợp âm sang guitar')).toEqual([{ kind: 'instrument', track: 'chords', instrument: 'acoustic_guitar_nylon', label: 'guitar' }])
     expect(kinds('tắt trống')).toEqual([{ kind: 'drums', on: false }])
+    expect(kinds('biến tấu bản phối')).toEqual([{ kind: 'varyArrangement' }])
     expect(parseCommand('nấu cơm đi').unknown).toEqual(['nau com di'])
   })
 

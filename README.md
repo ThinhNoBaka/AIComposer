@@ -4,20 +4,26 @@ Web app giúp người không biết nhạc lý vẫn sáng tác được: **ng�
 
 ## Tính năng
 
-- **Ngân nga thành giai điệu** (phần Data Science chính): thu bằng micro hoặc tải file lên, có đếm nhịp trước khi thu. Máy trả về nốt, giọng, tempo, độ tin cậy và hình các nốt thô nó nghe được.
+- **Ngân nga thành giai điệu** (phần Data Science chính): thu bằng micro hoặc tải file lên, có đếm nhịp trước khi thu. Máy trả về nốt, giọng, tempo, độ tin cậy và hình các nốt thô nó nghe được. Tự bù khi người ngân lệch chuẩn cao độ hoặc tụt dần.
 - **Ngân từng đoạn rồi ghép**: mỗi lần ngân có thể ghép nối tiếp vào sau đoạn trước. Máy tự dịch về đúng giọng của bài nếu bạn ngân lệch.
 - **Hoàn thiện thành bài**: máy thêm dạo đầu, điệp khúc (đệm dày hơn, có riser dẫn vào) và kết về chủ âm. Muốn dài hơn thì bấm thêm lượt đoạn chính + điệp khúc, bao nhiêu lần cũng được.
 - **Timeline kéo dài tự do** kiểu phần mềm làm nhạc: thước ô nhịp (bấm để chọn chỗ phát), cấu trúc bài, hợp âm, piano roll và làn hiệu ứng chung một thanh cuộn. Phía sau bài luôn có vài ô trống: đặt nốt hay hiệu ứng vào đó là bài tự dài ra, không cần chọn trước độ dài (tối đa 256 ô nhịp, hơn 8 phút ở 120 BPM).
 - **Hỗ trợ viết lời tiếng Việt**: gõ lời theo từng câu, chữ hiện ngay trên từng nốt. Máy đếm chữ so với số nốt của mỗi câu nhạc, cảnh báo chỗ giai điệu đi ngược thanh điệu (ví dụ chữ "về" hát lên cao dễ nghe thành "vê") và sửa bằng một nút, tìm vần chữ cuối câu, gợi ý chữ cùng vần, chẻ nốt cho đủ chữ, và **viết giai điệu theo lời** (cao độ đi theo thanh sắc, huyền, nặng…). Lời được xuất kèm trong file MIDI và ra file .txt.
 - **8 cảm xúc** (Vui tươi, Buồn, Chill, Hùng tráng, Lãng mạn, Sôi động, Mơ màng, Dân gian): mỗi cảm xúc chọn sẵn giọng, tempo, vòng hợp âm, nhạc cụ, kiểu đệm và trống.
-- **Hợp âm có màu theo cảm giác** (Ổn định / Chuyển động / Căng): khi đổi, gợi ý hợp âm hợp với giai điệu. Có nút "Hợp âm theo giai điệu" (thuật toán Viterbi).
+- **Hợp âm có màu theo cảm giác** (Ổn định / Chuyển động / Căng): khi đổi, gợi ý hợp âm hợp với giai điệu. Nút "Hợp âm theo giai điệu" dùng mô hình HMM học từ 909 bài POP909 (giải mã Viterbi), không có mô hình thì dùng luật.
 - **Tạo giai điệu tự động**: 3 phương án, Viết tiếp, Biến tấu, Cao hơn/Thấp hơn.
 - **128 nhạc cụ General MIDI, 5 bộ trống và 22 hiệu ứng âm thanh** (mưa, gió, sóng biển, chim, vỗ tay, riser…). Bạn cũng tải được âm thanh của riêng mình.
-- **Xuất MIDI (kèm lời), WAV, lời (.txt) và file bài (JSON)**. Bài được **lưu lên cloud (PostgreSQL)** và mở lại được từ mục "Bài của tôi".
+- **Chỉnh sửa như phần mềm làm nhạc**: Shift+bấm hoặc Shift+kéo khung để chọn nhiều nốt, kéo cả nhóm; Ctrl+C/X/V (dán tại chỗ phát), Ctrl+D nhân đôi, Delete xoá; kéo trên thước ô nhịp để đặt vùng lặp (phím L); máy đếm nhịp khi phát.
+- **Khoá**: khoá giai điệu, khoá hợp âm (đổi cảm xúc, hoà âm không đụng tới), khoá lời, khoá căn lời (chữ gắn chặt vào nốt).
+- **Ô "Bảo máy làm gì"**: gõ tiếng Việt có dấu hoặc không dấu, ví dụ "nhanh hơn", "tempo 90", "đổi sang buồn", "giọng La thứ", "nâng lên nửa cung", "thêm điệp khúc", "bỏ trống", "dùng sáo trúc", "tắt trống", "biến tấu bản phối".
+- **Phối và trộn**: kiểu đệm quạt chả guitar, nút "Biến tấu bản phối" (điệp khúc dày, đoạn chính thưa), nhạc cụ "Synth tự chỉnh" (dạng sóng, bộ lọc, ADSR), mỗi track có trái–phải, EQ 3 dải và độ vang.
+- **Giọng hát**: thu giọng theo nhạc nền (có đếm nhịp, bù độ trễ micro), máy chỉnh cao độ về giai điệu hoặc thang âm (độ mạnh, tốc độ kéo nốt, giữ rung giọng), nghe so sánh bản gốc và bản chỉnh, trộn vào bài.
+- **Mở file MIDI** (lấy giai điệu, tempo, giọng, hợp âm, lời). **Xuất MIDI (kèm lời), WAV, từng track (stems), gói trọn bài (.zip), lời (.txt) và file bài (JSON)**. Bài được **lưu lên cloud (PostgreSQL)** và mở lại được từ mục "Bài của tôi".
 
 ## Kiến trúc
 
 ```
+ml/         Train model: harmony (POP909, đã train), vn_tone (thanh điệu → giai điệu), humming (dò onset). Xem README từng thư mục
 frontend/   React 19 + TypeScript + Vite. Lý thuyết nhạc, sinh giai điệu, đệm, phát nhạc (Web Audio + smplr)
 backend/    FastAPI + SQLAlchemy. API lưu bài, API nhận nốt humming (librosa), script đánh giá
 Dockerfile  Một image: build frontend rồi FastAPI phục vụ cả API lẫn giao diện
@@ -30,7 +36,9 @@ render.yaml Deploy lên Render: web service + PostgreSQL
 |---|---|---|
 | 1. Giải mã audio | `backend/app/humming/audio.py` | ffmpeg đổi WebM/Opus, M4A, MP3, WAV về mono 16 kHz |
 | 2. Dò cao độ | `pitch.py` | pYIN (librosa), bước 10 ms, 65–1050 Hz, kèm xác suất có giọng và năng lượng |
-| 3. Tách nốt | `notes.py` | Lọc trung vị, cắt ở chỗ lặng, chỗ nhảy cao độ hoặc chỗ năng lượng tụt (nốt lặp lại), bỏ nốt quá ngắn |
+| 3. Tách nốt | `notes.py` | Cắt ở chỗ lặng; trong đoạn liền hơi, làm mượt cao độ bằng trung bình trượt ~1 chu kỳ rung giọng rồi tách khi rời mốc của nốt (bắt được cả bước nửa cung luyến liền); tách nốt lặp ở chỗ năng lượng tụt; gộp mẩu luyến ngắn |
+| 3b. Model onset (tuỳ chọn) | `onset_model.py` | Có file `backend/models/humming_onset.json` (train bằng `ml/humming`) thì tách/gộp nốt theo model |
+| 3c. Bù lệch chuẩn | `tuning.py` | Người ngân thường lệch La 440 Hz và trôi dần: ước lượng "chuẩn riêng" theo thời gian (trung bình vòng phần lẻ cent, có mở vòng), lấy cao độ phần ổn định của nốt rồi mới làm tròn |
 | 4. Dò giọng | `keys.py` | Tương quan với profile Krumhansl–Kessler cho 24 giọng trưởng/thứ |
 | 5. Dò tempo | `quantize.py` | Chấm điểm 60–160 BPM theo độ khớp khoảng cách onset với lưới móc đơn và phách, kèm prior quanh 100 BPM |
 | 6. Làm tròn nhịp | `quantize.py` | Đưa onset và trường độ về lưới 1/16, dời quãng tám về vùng giai điệu, đưa nốt lạc về thang âm |
@@ -67,6 +75,12 @@ npm run dev
 
 Mở http://localhost:5173. Vite tự chuyển `/api` sang backend ở cổng 8000. Không cần cài ffmpeg riêng vì gói `imageio-ffmpeg` đã kèm sẵn.
 
+### Kiểm tra máy
+
+```bash
+cd backend && python -m scripts.doctor   # Python, thư viện, ffmpeg, database, model, Node, cổng; in cách sửa từng lỗi
+```
+
 ### Kiểm thử
 
 ```bash
@@ -96,7 +110,16 @@ Image cũng chạy được ở nơi khác hỗ trợ Docker (Railway, Fly.io, H
 | `DATABASE_URL` | `sqlite:///./aicomposer.db` | Chuỗi kết nối. Nhận cả dạng `postgres://…` của Render/Heroku |
 | `MAX_UPLOAD_MB` | `15` | Dung lượng tối đa của file ghi âm |
 | `CORS_ORIGINS` | (trống) | Chỉ cần khi frontend nằm ở domain khác, ngăn cách bằng dấu phẩy |
+| `HUMMING_MODEL` | `backend/models/humming_onset.json` | File model dò onset; không có file thì dùng cách tách nốt mặc định, `none` để tắt |
 | `WARMUP` | `1` | Chạy nhận nốt thử khi khởi động để lần đầu người dùng không phải chờ biên dịch |
+
+## Model học máy
+
+| Bài toán | Thư mục | Trạng thái |
+|---|---|---|
+| B. Hoà âm (giai điệu → hợp âm) | `ml/harmony` | Đã train trên 909 bài POP909, file `frontend/src/core/harmonyModel.json`. Kết quả trong `ml/harmony/REPORT.md` |
+| A. Thanh điệu → giai điệu | `ml/vn_tone` | Pipeline đọc .kar/MusicXML và notebook Colab cho audio. Train xong đặt `tone_model.json` vào `frontend/public/models/`, app tự dùng |
+| C. Dò onset khi ngân | `ml/humming` | Notebook Colab train trên HumTrans. Đặt `humming_onset.json` vào `backend/models/`, backend tự dùng |
 
 ## Dành cho nhà phát triển: đo độ chính xác nhận nốt (không bắt buộc)
 
@@ -122,5 +145,8 @@ Mọi request gửi header `X-Owner-Key` (khoá ngẫu nhiên trình duyệt t�
 | GET, PUT, DELETE | `/api/projects/{id}` | Xem, sửa, xoá bài |
 | POST | `/api/humming` | Gửi file ghi âm (multipart `audio`, tuỳ chọn `bpm`, `tonic`, `mode`, `project_id`), nhận nốt đã làm tròn nhịp |
 | GET | `/api/humming/recordings` | Các bản thu đã gửi |
+| POST, GET | `/api/vocal/takes` | Gửi bản thu giọng hát (multipart `audio`, `offset_ms`, `bpm`, `project_id`), danh sách bản thu |
+| POST | `/api/vocal/takes/{id}/correct` | Chỉnh cao độ (độ mạnh, chế độ giai điệu/thang âm, tốc độ kéo nốt, giữ rung), trả về đường cao độ trước/sau |
+| GET, DELETE | `/api/vocal/takes/{id}/audio?version=original\|corrected`, `/api/vocal/takes/{id}` | Nghe bản gốc hoặc bản chỉnh, xoá bản thu |
 
 Tài liệu tương tác: `/docs` (Swagger) khi server đang chạy.

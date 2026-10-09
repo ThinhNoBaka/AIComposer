@@ -698,6 +698,9 @@ export default function App() {
         }
         moreRound()
         return null
+      case 'varyArrangement':
+        update((x) => varyArrangement(x, randomSeed()))
+        return null
       case 'extend':
         update((x) => extendSong(x, Math.min(MAX_BARS, x.bars + cmd.bars)))
         return null
