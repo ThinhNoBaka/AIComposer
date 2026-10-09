@@ -7,7 +7,8 @@ rồi đưa bảng xác suất đó vào app. App dùng bảng ở hai chỗ (`f
 - **Cảnh báo thanh điệu**: báo chữ dễ nghe sai khi bước nhảy đó (cùng hướng, xa từng đó trở lên) hiếm gặp trong bài hát thật
   (xác suất dưới `hint_threshold`, mặc định 0,1).
 
-Chưa có file `frontend/public/models/tone_model.json` thì app dùng luật có sẵn (sắc, ngã cao; ngang ở giữa; huyền, hỏi, nặng thấp).
+Bảng hiện có trong `frontend/public/models/tone_model.json` học từ 20 bài hát Việt (khoảng 3.800 chữ) của bộ dữ liệu
+Edinburgh (xem bên dưới). Xoá file đó thì app quay về luật có sẵn (sắc, ngã cao; ngang ở giữa; huyền, hỏi, nặng thấp).
 
 ## Các file
 
@@ -15,6 +16,7 @@ Chưa có file `frontend/public/models/tone_model.json` thì app dùng luật c�
 |---|---|
 | `vn_common.py` | Thanh điệu (cùng luật với `toneOf` ở frontend), schema, đoán bảng mã, dò giọng, đọc/ghi bảng |
 | `extract_symbolic.py` | Karaoke `.kar`/`.mid` (mido) và MusicXML (music21) → bảng chữ |
+| `extract_edinburgh.py` | Bộ 20 bài Việt có sẵn nốt và thanh điệu (CSV, ĐH Edinburgh) → bảng chữ |
 | `extract_audio.py` | Bản thu thật → tách giọng (Demucs) → F0 (torchcrepe/pYIN) → nốt → căn lời (wav2vec2 CTC) → bảng chữ |
 | `colab_vn_tone.ipynb` | Chạy đường audio từng bước trên Colab (GPU), có giải thích |
 | `train.py` | Học bảng xác suất, in số liệu đánh giá, xuất `tone_model.json` |
@@ -39,6 +41,23 @@ ml/vn_tone/data/audio/          ← bản thu + lời (cho đường audio)
 ```
 
 Không xếp theo thư mục được thì đưa thêm `--artists artists.csv` (hai cột `file,artist`).
+
+## Dữ liệu có sẵn: 20 bài của ĐH Edinburgh
+
+Kirby & Ladd, "Tone-melody correspondence in Vietnamese popular song: supplementary materials", Edinburgh DataShare
+(https://datashare.ed.ac.uk/handle/10283/2047, CC BY 4.0): 20 bài tân nhạc/dân ca mới, mỗi chữ có nốt (cả nốt luyến),
+trường độ, chỗ hết câu và thanh điệu; lời ghi bằng IPA nên thanh lấy từ cột `tone`.
+
+```bash
+mkdir -p ml/vn_tone/data/raw/edinburgh && cd ml/vn_tone/data/raw/edinburgh
+curl -L -o csv.zip https://datashare.ed.ac.uk/bitstreams/a5134234-8d1a-436c-955a-8b6ac0e28c11/download && unzip -j csv.zip && cd -
+python ml/vn_tone/extract_edinburgh.py --input ml/vn_tone/data/raw/edinburgh --out ml/vn_tone/data/processed_edinburgh
+python ml/vn_tone/train.py --data ml/vn_tone/data/processed_edinburgh    # thêm --data khác để học chung với file karaoke
+```
+
+Kết quả (chia train/test theo bài): đoán đúng hướng lên/ngang/xuống ngang luật cũ (77%), nhưng đoán đúng cả độ xa của bước
+nhảy tốt hơn hẳn (log loss 1,37 so với 1,76 khi chỉ nhìn thanh chữ hiện tại), nên giai điệu viết theo lời có bước đi giống bài thật hơn.
+Bộ này nhỏ và nghiêng về nhạc miền Bắc; thêm file karaoke của bạn rồi học chung sẽ tốt hơn.
 
 ## Chạy trên laptop (karaoke, MusicXML)
 
